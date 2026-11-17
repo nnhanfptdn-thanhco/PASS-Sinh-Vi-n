@@ -12,47 +12,112 @@ import {
   getStorage,
   connectStorageEmulator,
 } from "firebase/storage";
+import { getClientEnv } from "@/lib/env";
+
+const clientEnv = getClientEnv();
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "demo-api-key",
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "cho-pass-sv-dev.firebaseapp.com",
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "cho-pass-sv-dev",
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "cho-pass-sv-dev.appspot.com",
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "1234567890",
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:1234567890:web:abcdef123456",
+  apiKey: clientEnv.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: clientEnv.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: clientEnv.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: clientEnv.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: clientEnv.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: clientEnv.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Khởi tạo Firebase App (Singleton)
+// Khởi tạo Firebase App (Singleton pattern)
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
-// Kết nối tới Firebase Emulator Suite nếu đang ở môi trường phát triển cục bộ
+// Kết nối tới Firebase Emulator Suite nếu được kích hoạt
 if (
-  process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true" &&
+  clientEnv.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true" &&
   typeof window !== "undefined"
 ) {
-  // Tránh kết nối lặp lại trong quá trình HMR (Hot Module Replacement)
   // @ts-expect-error global emulator connection flag
   if (!window.__FIREBASE_EMULATORS_CONNECTED__) {
-    const authUrl = process.env.NEXT_PUBLIC_EMULATOR_AUTH_URL || "http://127.0.0.1:9099";
-    const firestoreHost = process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_HOST || "127.0.0.1";
-    const firestorePort = Number(process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_PORT || 8080);
-    const storageHost = process.env.NEXT_PUBLIC_EMULATOR_STORAGE_HOST || "127.0.0.1";
-    const storagePort = Number(process.env.NEXT_PUBLIC_EMULATOR_STORAGE_PORT || 9199);
+    const authUrl = clientEnv.NEXT_PUBLIC_EMULATOR_AUTH_URL || "http://127.0.0.1:9099";
+    const firestoreHost = clientEnv.NEXT_PUBLIC_EMULATOR_FIRESTORE_HOST || "127.0.0.1";
+    const firestorePort = Number(clientEnv.NEXT_PUBLIC_EMULATOR_FIRESTORE_PORT || 8080);
+    const storageHost = clientEnv.NEXT_PUBLIC_EMULATOR_STORAGE_HOST || "127.0.0.1";
+    const storagePort = Number(clientEnv.NEXT_PUBLIC_EMULATOR_STORAGE_PORT || 9199);
 
     try {
       connectAuthEmulator(auth, authUrl, { disableWarnings: true });
       connectFirestoreEmulator(db, firestoreHost, firestorePort);
       connectStorageEmulator(storage, storageHost, storagePort);
-      console.log("⚡ Đã kết nối Firebase Client với Local Emulator Suite thành công.");
       // @ts-expect-error global emulator connection flag
       window.__FIREBASE_EMULATORS_CONNECTED__ = true;
     } catch {
-      // Bỏ qua nếu đã kết nối
+      // Bỏ qua nếu đã gắn kết nối trước đó
     }
   }
+}
+
+/**
+ * authFetch: Helper gửi request API có tự động đính kèm Firebase ID Token.
+ * - Tự động lấy token mới nhất của user đang đăng nhập.
+ * - Nếu gặp lỗi 401 (token hết hạn/thu hồi), ép làm mới token 1 lần và thử lại.
+ * - Nếu vẫn 401, tự động đăng xuất và điều hướng về trang đăng nhập kèm tham số ?next=.
+ */
+export async function authFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const currentUser = auth.currentUser;
+  let token: string | undefined;
+
+  if (currentUser) {
+    try {
+      token = await currentUser.getIdToken();
+    } catch {
+      // Bỏ qua lỗi lấy token ban đầu
+    }
+  }
+
+  const makeHeaders = (bearerToken?: string) => {
+    const headers = new Headers(init?.headers);
+    if (bearerToken) {
+      headers.set("Authorization", `Bearer ${bearerToken}`);
+    }
+    return headers;
+  };
+
+  let response = await fetch(input, {
+    ...init,
+    headers: makeHeaders(token),
+  });
+
+  // Nếu trả về 401 Unauthorized và user đang tồn tại, thử ép làm mới token và gửi lại một lần
+  if (response.status === 401 && currentUser) {
+    try {
+      const refreshedToken = await currentUser.getIdToken(true);
+      response = await fetch(input, {
+        ...init,
+        headers: makeHeaders(refreshedToken),
+      });
+    } catch {
+      // Thất bại khi làm mới token
+    }
+
+    // Nếu vẫn 401, phiên đăng nhập hoàn toàn vô hiệu
+    if (response.status === 401) {
+      try {
+        await auth.signOut();
+      } catch {
+        // Bỏ qua lỗi signOut
+      }
+      if (typeof window !== "undefined") {
+        const nextUrl = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = `/auth/login?next=${nextUrl}`;
+      }
+    }
+  }
+
+  return response;
 }

@@ -1,30 +1,89 @@
-import { getApps, initializeApp } from "firebase-admin/app";
+import "server-only";
+import { getApps, initializeApp, cert, type ServiceAccount } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import * as crypto from "crypto";
 
-// Cấu hình môi trường Emulator cho Firebase Admin
-if (
-  process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true" &&
-  !process.env.FIRESTORE_EMULATOR_HOST
-) {
-  process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";
-  process.env.FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099";
-  process.env.FIREBASE_STORAGE_EMULATOR_HOST = "127.0.0.1:9199";
+const isProduction = process.env.NODE_ENV === "production";
+const isEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true";
+
+// Cấu hình môi trường Emulator cho Firebase Admin nếu được kích hoạt
+if (isEmulator) {
+  process.env.FIRESTORE_EMULATOR_HOST =
+    process.env.FIRESTORE_EMULATOR_HOST ||
+    process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_HOST
+      ? `${process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_HOST || "127.0.0.1"}:${process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_PORT || "8080"}`
+      : "127.0.0.1:8080";
+
+  process.env.FIREBASE_AUTH_EMULATOR_HOST =
+    process.env.FIREBASE_AUTH_EMULATOR_HOST ||
+    (process.env.NEXT_PUBLIC_EMULATOR_AUTH_URL
+      ? process.env.NEXT_PUBLIC_EMULATOR_AUTH_URL.replace(/^https?:\/\//, "")
+      : "127.0.0.1:9099");
+
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST =
+    process.env.FIREBASE_STORAGE_EMULATOR_HOST ||
+    (process.env.NEXT_PUBLIC_EMULATOR_STORAGE_HOST
+      ? `${process.env.NEXT_PUBLIC_EMULATOR_STORAGE_HOST}:${process.env.NEXT_PUBLIC_EMULATOR_STORAGE_PORT || "9199"}`
+      : "127.0.0.1:9199");
 }
 
-const app =
-  getApps().length > 0
-    ? getApps()[0]
-    : initializeApp({
-        projectId: process.env.FIREBASE_PROJECT_ID || "cho-pass-sv-dev",
-      });
+function initAdminApp() {
+  if (getApps().length > 0) {
+    return getApps()[0];
+  }
+
+  const projectId =
+    process.env.FIREBASE_PROJECT_ID ||
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+
+  if (!projectId) {
+    throw new Error(
+      "[Firebase Admin]: Thiếu biến môi trường FIREBASE_PROJECT_ID (hoặc NEXT_PUBLIC_FIREBASE_PROJECT_ID)."
+    );
+  }
+
+  // Khi kết nối Emulator trong môi trường dev/test, chỉ cần projectId
+  if (isEmulator && !isProduction) {
+    return initializeApp({ projectId });
+  }
+
+  // Khi ở môi trường Production hoặc kết nối Firebase thật, bắt buộc phải có Service Account
+  if (!clientEmail || !privateKey) {
+    if (isProduction) {
+      throw new Error(
+        "[Bảo Mật Nghiêm Ngặt]: Môi trường Production bắt buộc phải cung cấp FIREBASE_CLIENT_EMAIL và FIREBASE_PRIVATE_KEY trong Environment Variables."
+      );
+    }
+    // Nếu ở môi trường local nhưng không bật emulator, vẫn cảnh báo nhưng cho phép ADC nếu có
+    return initializeApp({ projectId });
+  }
+
+  const serviceAccount: ServiceAccount = {
+    projectId,
+    clientEmail,
+    privateKey,
+  };
+
+  return initializeApp({
+    credential: cert(serviceAccount),
+    projectId,
+    storageBucket:
+      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+      `${projectId}.appspot.com`,
+  });
+}
+
+const app = initAdminApp();
 
 export const adminAuth = getAuth(app);
 export const adminDb = getFirestore(app);
 export const adminStorage = getStorage(app);
-export { FieldValue } from "firebase-admin/firestore";
+export { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 /**
  * Tính mã băm HMAC-SHA256 cho mã số sinh viên kết hợp mã trường.
@@ -32,9 +91,31 @@ export { FieldValue } from "firebase-admin/firestore";
  * Tuyệt đối không gửi mã gốc hay tính ở Client để chống đảo ngược.
  */
 export function computeStudentIdHash(schoolCode: string, studentId: string): string {
-  const secret =
-    process.env.STUDENT_ID_HMAC_SECRET ||
-    "demo-secret-key-replace-in-production";
+  const secret = process.env.STUDENT_ID_HMAC_SECRET;
+
+  if (!secret) {
+    if (isProduction) {
+      throw new Error(
+        "[Bảo Mật Nghiêm Ngặt]: Thiếu biến môi trường STUDENT_ID_HMAC_SECRET trong Production."
+      );
+    }
+    if (!isEmulator) {
+      throw new Error(
+        "[Cảnh Báo Bảo Mật]: Thiếu STUDENT_ID_HMAC_SECRET. Vui lòng thiết lập biến môi trường này hoặc bật emulator."
+      );
+    }
+    // Chỉ dev emulator mới dùng tạm secret này
+    return crypto
+      .createHmac("sha256", "dev-emulator-secret-key-32-chars-minimum!!")
+      .update(`${schoolCode.trim().toUpperCase()}:${studentId.trim().toUpperCase()}`)
+      .digest("hex");
+  }
+
+  if (isProduction && secret.includes("demo-secret-key")) {
+    throw new Error(
+      "[Bảo Mật Nghiêm Ngặt]: STUDENT_ID_HMAC_SECRET không được dùng khóa mẫu 'demo-secret-key' trên Production."
+    );
+  }
 
   const normalizedInput = `${schoolCode.trim().toUpperCase()}:${studentId.trim().toUpperCase()}`;
   return crypto.createHmac("sha256", secret).update(normalizedInput).digest("hex");

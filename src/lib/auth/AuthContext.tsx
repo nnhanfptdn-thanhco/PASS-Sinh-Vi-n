@@ -6,11 +6,14 @@ import {
   onAuthStateChanged,
   signInWithPopup,
   signInWithRedirect,
+  getRedirectResult,
   signOut,
   IdTokenResult,
 } from "firebase/auth";
-import { auth, googleProvider } from "@/lib/firebase/client";
+import { doc, onSnapshot, Unsubscribe } from "firebase/firestore";
+import { auth, db, googleProvider, authFetch } from "@/lib/firebase/client";
 import { isEmbeddedWebView } from "@/lib/utils/webview";
+import { getFirebaseAuthErrorMessage } from "@/lib/auth/errors";
 
 export type UserRole = "guest" | "pending" | "verified" | "admin";
 
@@ -36,11 +39,12 @@ interface AuthContextType {
   profile: UserProfileData | null;
   role: UserRole;
   isLoading: boolean;
+  isSigningIn: boolean;
   isWebView: boolean;
   loginWithGoogle: () => Promise<void>;
-  loginWithDemo: (selectedRole?: "verified" | "pending") => void;
   logout: () => Promise<void>;
   refreshClaims: () => Promise<void>;
+  getIdToken: () => Promise<string | undefined>;
   errorMessage: string | null;
   clearError: () => void;
 }
@@ -50,11 +54,12 @@ const AuthContext = React.createContext<AuthContextType>({
   profile: null,
   role: "guest",
   isLoading: true,
+  isSigningIn: false,
   isWebView: false,
   loginWithGoogle: async () => {},
-  loginWithDemo: () => {},
   logout: async () => {},
   refreshClaims: async () => {},
+  getIdToken: async () => undefined,
   errorMessage: null,
   clearError: () => {},
 });
@@ -64,63 +69,168 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = React.useState<UserProfileData | null>(null);
   const [role, setRole] = React.useState<UserRole>("guest");
   const [isLoading, setIsLoading] = React.useState(true);
+  const [isSigningIn, setIsSigningIn] = React.useState(false);
   const [isWebView, setIsWebView] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setIsWebView(isEmbeddedWebView());
 
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        try {
-          const tokenResult: IdTokenResult = await currentUser.getIdTokenResult(true);
-          const claims = tokenResult.claims;
-          const isAdmin = Boolean(claims.admin);
-          const isVerified = Boolean(claims.verified);
-
-          let currentRole: UserRole = "pending";
-          if (isAdmin) currentRole = "admin";
-          else if (isVerified) currentRole = "verified";
-
-          setRole(currentRole);
-          setProfile({
-            uid: currentUser.uid,
-            displayName: currentUser.displayName || "Sinh viên",
-            email: currentUser.email,
-            photoURL: currentUser.photoURL,
-            verified: isVerified,
-            isAdmin,
-            verificationStatus: isVerified ? "approved" : "pending",
-          });
-        } catch {
-          setRole("pending");
+    // Xử lý kết quả trả về từ signInWithRedirect nếu có
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          // Thành công từ redirect
         }
-      } else {
-        // Kiểm tra xem có phiên đăng nhập thử nghiệm (Demo) trong localStorage không
-        if (typeof window !== "undefined") {
-          const savedDemo = localStorage.getItem("demo_auth_user");
-          if (savedDemo) {
-            try {
-              const parsed = JSON.parse(savedDemo);
-              setUser(parsed.demoUser);
-              setProfile(parsed.demoProfile);
-              setRole(parsed.selectedRole);
-              setIsLoading(false);
-              return;
-            } catch {
-              // Bỏ qua lỗi parse
+      })
+      .catch((err: unknown) => {
+        const firebaseErr = err as { code?: string };
+        const msg = getFirebaseAuthErrorMessage(firebaseErr?.code);
+        if (msg) {
+          setErrorMessage(msg);
+        }
+      });
+
+    let unsubUserDoc: Unsubscribe | null = null;
+    let unsubVerificationDoc: Unsubscribe | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      // Dọn dẹp listeners cũ nếu đổi user
+      if (unsubUserDoc) {
+        unsubUserDoc();
+        unsubUserDoc = null;
+      }
+      if (unsubVerificationDoc) {
+        unsubVerificationDoc();
+        unsubVerificationDoc = null;
+      }
+
+      setUser(currentUser);
+
+      if (!currentUser) {
+        setProfile(null);
+        setRole("guest");
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        // 1. Gọi Bootstrap API để tạo profile khởi tạo hoặc cấp quyền admin tự động
+        try {
+          const bootstrapRes = await authFetch("/api/auth/bootstrap", {
+            method: "POST",
+          });
+          if (bootstrapRes.ok) {
+            const data = await bootstrapRes.json();
+            if (data.claimsChanged) {
+              await currentUser.getIdToken(true);
             }
           }
+        } catch {
+          // Tiếp tục kể cả khi bootstrap offline tạm thời
         }
 
-        setRole("guest");
-        setProfile(null);
+        // 2. Lấy Claims từ ID Token hiện tại
+        const tokenResult: IdTokenResult = await currentUser.getIdTokenResult();
+        const isAdmin = Boolean(tokenResult.claims.admin);
+        const isVerified = Boolean(tokenResult.claims.verified);
+
+        let currentRole: UserRole = "pending";
+        if (isAdmin) currentRole = "admin";
+        else if (isVerified) currentRole = "verified";
+        setRole(currentRole);
+
+        // Khởi tạo profile sơ bộ từ token trước khi snapshot Firestore trả về
+        setProfile({
+          uid: currentUser.uid,
+          displayName: currentUser.displayName || "Sinh viên",
+          email: currentUser.email,
+          photoURL: currentUser.photoURL,
+          verified: isVerified,
+          isAdmin,
+          verificationStatus: isVerified ? "approved" : "none",
+        });
+
+        // 3. Đăng ký Snapshot Firestore đọc users/{uid} và verifications/{uid} thời gian thực
+        let userDocData: Record<string, unknown> = {};
+        let verificationStatus: "none" | "pending" | "approved" | "rejected" | "expired" =
+          isVerified ? "approved" : "none";
+
+        const updateCombinedProfile = () => {
+          setProfile({
+            uid: currentUser.uid,
+            displayName: (userDocData.displayName as string) || currentUser.displayName || "Sinh viên",
+            email: currentUser.email,
+            photoURL: (userDocData.photoURL as string) || currentUser.photoURL,
+            schoolCode: userDocData.schoolCode as string | undefined,
+            schoolName: userDocData.schoolName as string | undefined,
+            campusId: userDocData.campusId as string | undefined,
+            campusName: userDocData.campusName as string | undefined,
+            provinceCode: userDocData.provinceCode as string | undefined,
+            wardCode: userDocData.wardCode as string | undefined,
+            verified: Boolean(userDocData.verified || isVerified),
+            isAdmin,
+            isGraduating: userDocData.isGraduating as boolean | undefined,
+            verificationStatus,
+          });
+        };
+
+        const userDocRef = doc(db, "users", currentUser.uid);
+        unsubUserDoc = onSnapshot(
+          userDocRef,
+          (docSnap) => {
+            if (docSnap.exists()) {
+              userDocData = docSnap.data();
+              updateCombinedProfile();
+            }
+            setIsLoading(false);
+          },
+          () => {
+            setIsLoading(false);
+          }
+        );
+
+        const verificationDocRef = doc(db, "verifications", currentUser.uid);
+        unsubVerificationDoc = onSnapshot(
+          verificationDocRef,
+          async (verifSnap) => {
+            if (verifSnap.exists()) {
+              const vData = verifSnap.data();
+              verificationStatus = (vData.status as typeof verificationStatus) || "pending";
+
+              // Nếu hồ sơ đã duyệt mà claim chưa có verified, tự động làm mới token
+              if (verificationStatus === "approved" && !isVerified) {
+                try {
+                  const refreshedToken = await currentUser.getIdTokenResult(true);
+                  if (refreshedToken.claims.verified) {
+                    setRole(refreshedToken.claims.admin ? "admin" : "verified");
+                  }
+                } catch {
+                  // Bỏ qua lỗi làm mới token
+                }
+              }
+            } else {
+              verificationStatus = isVerified ? "approved" : "none";
+            }
+            updateCombinedProfile();
+          },
+          () => {
+            // Người dùng chưa có hồ sơ xác minh
+            verificationStatus = isVerified ? "approved" : "none";
+            updateCombinedProfile();
+          }
+        );
+      } catch {
+        setRole("pending");
+        setIsLoading(false);
       }
-      setIsLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubUserDoc) unsubUserDoc();
+      if (unsubVerificationDoc) unsubVerificationDoc();
+    };
   }, []);
 
   const refreshClaims = async () => {
@@ -141,7 +251,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               ...prev,
               verified: isVerified,
               isAdmin,
-              verificationStatus: isVerified ? "approved" : "pending",
+              verificationStatus: isVerified ? "approved" : prev.verificationStatus,
             }
           : null
       );
@@ -150,98 +260,70 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const getIdToken = async (): Promise<string | undefined> => {
+    if (!auth.currentUser) return undefined;
+    try {
+      return await auth.currentUser.getIdToken();
+    } catch {
+      return undefined;
+    }
+  };
+
   const loginWithGoogle = async () => {
     setErrorMessage(null);
 
-    // Nếu chưa cấu hình Firebase Google OAuth thật (đang dùng demo-api-key), tự động đăng nhập trải nghiệm mượt mà 100%
-    const isDemoKey =
-      !process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
-      process.env.NEXT_PUBLIC_FIREBASE_API_KEY === "demo-api-key";
-
-    if (isDemoKey) {
-      loginWithDemo("verified");
-      return;
-    }
-
-    // Kiểm tra trình duyệt nhúng Zalo / Facebook
+    // Kiểm tra trình duyệt nhúng Zalo / Facebook / TikTok...
     if (isEmbeddedWebView()) {
       setErrorMessage(
-        "Bạn đang mở trong ứng dụng Zalo/Facebook. Vui lòng bấm vào dấu ba chấm (...) và chọn 'Mở bằng Chrome' hoặc 'Mở bằng Safari' để đăng nhập Google an toàn."
+        "Bạn đang mở trong ứng dụng Zalo/Facebook/TikTok. Vui lòng bấm vào biểu tượng ba chấm (...) ở góc trên và chọn 'Mở bằng Chrome' hoặc 'Mở bằng Safari' để đăng nhập Google an toàn."
       );
       return;
     }
 
-    try {
-      const isMobile =
-        typeof window !== "undefined" &&
-        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (isSigningIn) return;
+    setIsSigningIn(true);
 
-      if (isMobile) {
-        await signInWithRedirect(auth, googleProvider);
-      } else {
+    try {
+      // Mặc định đăng nhập bằng Popup đồng bộ
+      await signInWithPopup(auth, googleProvider);
+    } catch (popupErr: unknown) {
+      const err = popupErr as { code?: string; message?: string };
+      const code = err?.code;
+
+      if (code === "auth/popup-blocked") {
         try {
-          await signInWithPopup(auth, googleProvider);
-        } catch (popupErr: unknown) {
-          const err = popupErr as { code?: string };
-          if (
-            err.code === "auth/popup-blocked" ||
-            err.code === "auth/cancelled-popup-request"
-          ) {
-            // Dự phòng chuyển sang redirect nếu trình duyệt chặn popup
-            await signInWithRedirect(auth, googleProvider);
-          } else {
-            throw popupErr;
-          }
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectErr: unknown) {
+          const rErr = redirectErr as { code?: string };
+          const msg = getFirebaseAuthErrorMessage(rErr?.code);
+          if (msg) setErrorMessage(msg);
+        }
+      } else if (
+        code === "auth/popup-closed-by-user" ||
+        code === "auth/cancelled-popup-request"
+      ) {
+        // Người dùng tự đóng hoặc huỷ popup: Im lặng, không hiển thị thông báo đỏ
+      } else {
+        const msg = getFirebaseAuthErrorMessage(code);
+        if (msg) {
+          setErrorMessage(msg);
         }
       }
-    } catch (err: unknown) {
-      console.warn("Google Auth gặp lỗi, tự động chuyển sang chế độ đăng nhập trải nghiệm:", err);
-      // Tự động chuyển sang tài khoản trải nghiệm để người dùng không bao giờ bị chặn hay thấy màn hình lỗi
-      loginWithDemo("verified");
-    }
-  };
-
-  const loginWithDemo = (selectedRole: "verified" | "pending" = "verified") => {
-    const isVerified = selectedRole === "verified";
-    const demoUser = {
-      uid: isVerified ? "demo-student-verified" : "demo-student-pending",
-      displayName: "Trương Nam Nhân (SV Demo)",
-      email: "nnhanfptdn@gmail.com",
-      photoURL: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80",
-    } as unknown as User;
-
-    const demoProfile: UserProfileData = {
-      uid: demoUser.uid,
-      displayName: "Trương Nam Nhân (SV Demo)",
-      email: "nnhanfptdn@gmail.com",
-      photoURL: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80",
-      verified: isVerified,
-      isAdmin: false,
-      schoolCode: "FPT",
-      schoolName: "Đại học FPT Đà Nẵng",
-      provinceCode: "DANANG",
-      wardCode: "HOAHAI",
-      verificationStatus: isVerified ? "approved" : "pending",
-    };
-
-    setUser(demoUser);
-    setProfile(demoProfile);
-    setRole(selectedRole);
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("demo_auth_user", JSON.stringify({ demoUser, demoProfile, selectedRole }));
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
   const logout = async () => {
     try {
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("demo_auth_user");
-      }
       await signOut(auth);
       setRole("guest");
       setUser(null);
       setProfile(null);
+      if (typeof window !== "undefined") {
+        window.location.href = "/";
+      }
     } catch (err) {
       console.error("Lỗi đăng xuất:", err);
     }
@@ -254,11 +336,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         profile,
         role,
         isLoading,
+        isSigningIn,
         isWebView,
         loginWithGoogle,
-        loginWithDemo,
         logout,
         refreshClaims,
+        getIdToken,
         errorMessage,
         clearError: () => setErrorMessage(null),
       }}
