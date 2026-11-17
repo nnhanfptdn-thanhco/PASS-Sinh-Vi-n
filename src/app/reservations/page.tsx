@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useAuth } from "@/lib/auth/AuthContext";
+import { authFetch } from "@/lib/firebase/client";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
@@ -30,7 +31,6 @@ interface ReservationItem {
 }
 
 export default function ReservationsPage() {
-  const { user } = useAuth();
   const [activeTab, setActiveTab] = React.useState<"all" | "buyer" | "seller">("all");
   const [reviewModalItem, setReviewModalItem] = React.useState<ReservationItem | null>(null);
   const [rating, setRating] = React.useState(5);
@@ -81,12 +81,11 @@ export default function ReservationsPage() {
 
   const handleAction = async (id: string, action: "confirm" | "reject" | "complete") => {
     try {
-      const res = await fetch("/api/reservations/action", {
+      const res = await authFetch("/api/reservations/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reservationId: id,
-          userId: user?.uid || "demo-seller-id",
           action,
         }),
       });
@@ -117,12 +116,11 @@ export default function ReservationsPage() {
     if (!reviewModalItem) return;
     setIsSubmittingReview(true);
     try {
-      await fetch("/api/reviews", {
+      await authFetch("/api/reviews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reservationId: reviewModalItem.id,
-          reviewerId: user?.uid || "demo-reviewer",
           rating,
           comment,
         }),
@@ -142,7 +140,8 @@ export default function ReservationsPage() {
   });
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+    <RequireAuth>
+      <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div className="border-b border-surface-border pb-5">
         <h1 className="text-2xl font-heading font-extrabold text-text-main">
           Quản Lý Giữ Chỗ Mua Bán
@@ -368,5 +367,6 @@ export default function ReservationsPage() {
         </div>
       </Modal>
     </div>
+    </RequireAuth>
   );
 }

@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { authFetch } from "@/lib/firebase/client";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
@@ -39,9 +41,26 @@ export default function SettingsPage() {
     setTimeout(() => setSaveSuccess(false), 2500);
   };
 
-  const handleExportData = () => {
-    const uid = user?.uid || "demo-user-id";
-    window.open(`/api/account/export?userId=${uid}`, "_blank");
+  const handleExportData = async () => {
+    try {
+      const res = await authFetch("/api/account/export");
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "Không thể xuất dữ liệu");
+        return;
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `chopass-data-${user?.uid || "me"}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      alert("Đã xảy ra lỗi khi xuất dữ liệu");
+    }
   };
 
   const handleDeleteAccount = async () => {
@@ -52,10 +71,9 @@ export default function SettingsPage() {
 
     setIsDeleting(true);
     try {
-      const res = await fetch("/api/account/delete", {
+      const res = await authFetch("/api/account/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user?.uid || "demo-user-id" }),
       });
 
       const data = await res.json();
@@ -75,7 +93,8 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
+    <RequireAuth>
+      <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
       <div className="border-b border-surface-border pb-5">
         <h1 className="text-2xl font-heading font-extrabold text-text-main">
           Cài Đặt Tài Khoản & Quyền Riêng Tư
@@ -264,5 +283,6 @@ export default function SettingsPage() {
         </div>
       </Modal>
     </div>
+    </RequireAuth>
   );
 }

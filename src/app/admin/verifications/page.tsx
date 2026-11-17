@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { authFetch } from "@/lib/firebase/client";
+import { RequireAdmin } from "@/components/auth/RequireAdmin";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
@@ -43,45 +45,17 @@ export default function AdminVerificationsPage() {
 
   const fetchItems = async () => {
     try {
-      const res = await fetch("/api/admin/verifications");
-      const data = await res.json();
-      if (data.items) {
-        setItems(data.items);
+      const res = await authFetch("/api/admin/verifications");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.items) {
+          setItems(data.items);
+        }
+      } else {
+        setItems([]);
       }
     } catch {
-      // Mock data cho giao diện demo nếu chưa có dữ liệu
-      setItems([
-        {
-          id: "v1",
-          userId: "u123",
-          userEmail: "nguyen.vana@hcmut.edu.vn",
-          realName: "Nguyễn Văn An",
-          schoolCode: "QSX (ĐH Bách Khoa TP.HCM)",
-          faculty: "Khoa Điện - Điện tử",
-          studentClass: "K2021",
-          studentIdLast4: "4589",
-          status: "pending",
-          isEduEmail: true,
-          isGraduating: false,
-          cardImagePreviewUrl:
-            "https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=80",
-        },
-        {
-          id: "v2",
-          userId: "u456",
-          userEmail: "lethihuong@neu.edu.vn",
-          realName: "Lê Thị Hương",
-          schoolCode: "KHA (ĐH Kinh Tế Quốc Dân)",
-          faculty: "Khoa Quản trị Kinh doanh",
-          studentClass: "K63",
-          studentIdLast4: "1124",
-          status: "pending",
-          isEduEmail: true,
-          isGraduating: true,
-          cardImagePreviewUrl:
-            "https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=600&auto=format&fit=crop&q=80",
-        },
-      ]);
+      setItems([]);
     }
   };
 
@@ -94,7 +68,7 @@ export default function AdminVerificationsPage() {
     setIsProcessing(true);
 
     try {
-      const res = await fetch("/api/admin/verifications", {
+      const res = await authFetch("/api/admin/verifications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -133,7 +107,8 @@ export default function AdminVerificationsPage() {
   });
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+    <RequireAdmin>
+      <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
       {/* Tiêu đề & Thống kê */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-surface-border pb-5">
         <div>
@@ -379,5 +354,6 @@ export default function AdminVerificationsPage() {
         </div>
       </Modal>
     </div>
+    </RequireAdmin>
   );
 }

@@ -1,42 +1,76 @@
 "use client";
 
 import * as React from "react";
+import { Suspense } from "react";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { copyCurrentUrlToClipboard } from "@/lib/utils/webview";
+import {
+  isAndroidDevice,
+  getAndroidChromeIntentUrl,
+  copyCurrentUrlToClipboard,
+} from "@/lib/utils/webview";
+import { safeNext } from "@/lib/utils/url";
 import {
   GraduationCap,
   Copy,
   Check,
   AlertCircle,
+  ExternalLink,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
-  const { user, role, loginWithGoogle, loginWithDemo, isWebView, errorMessage, clearError } =
-    useAuth();
+  const searchParams = useSearchParams();
+  const rawNext = searchParams.get("next");
+  const targetNext = safeNext(rawNext);
+
+  const {
+    user,
+    profile,
+    role,
+    isLoading: isAuthLoading,
+    isSigningIn,
+    loginWithGoogle,
+    isWebView,
+    errorMessage,
+    clearError,
+  } = useAuth();
+
   const [copied, setCopied] = React.useState(false);
-  const [isLoading, setIsLoading] = React.useState(false);
+  const [isAndroid, setIsAndroid] = React.useState(false);
 
   React.useEffect(() => {
-    // Nếu đã đăng nhập và là thành viên, chuyển hướng phù hợp
-    if (user) {
-      if (role === "verified" || role === "admin") {
-        router.push("/");
-      } else {
-        router.push("/auth/onboarding");
+    setIsAndroid(isAndroidDevice());
+  }, []);
+
+  // Điều hướng dựa trên trạng thái người dùng
+  React.useEffect(() => {
+    if (user && !isAuthLoading) {
+      const vStatus = profile?.verificationStatus;
+
+      // Người dùng đã có hồ sơ duyệt hoặc đang chờ duyệt -> điều hướng về targetNext hoặc trang chủ
+      if (
+        role === "admin" ||
+        role === "verified" ||
+        vStatus === "approved" ||
+        vStatus === "pending"
+      ) {
+        router.replace(targetNext !== "/" ? targetNext : "/");
+      } else if (vStatus === "none" || vStatus === "rejected" || vStatus === "expired") {
+        // Người dùng chưa nộp thẻ sinh viên -> chuyển sang trang nộp thẻ xác thực
+        router.replace("/auth/onboarding");
       }
     }
-  }, [user, role, router]);
+  }, [user, profile, role, isAuthLoading, targetNext, router]);
 
   const handleGoogleLogin = async () => {
-    setIsLoading(true);
+    clearError();
     await loginWithGoogle();
-    setIsLoading(false);
-    window.location.href = "/";
+    // Không dùng window.location.href="/" ở đây để tránh làm mất lỗi hoặc chuyển hướng sai trang
   };
 
   const handleCopyLink = async () => {
@@ -47,67 +81,93 @@ export default function LoginPage() {
     }
   };
 
+  const isBusy = isSigningIn || (user !== null && isAuthLoading);
+
   return (
-    <div className="min-h-[75vh] flex items-center justify-center px-4 py-8">
-      <div className="w-full max-w-md bg-surface border border-surface-border rounded-2xl p-6 sm:p-8 shadow-card space-y-6 text-center">
-        {/* Logo */}
-        <div className="w-14 h-14 rounded-2xl bg-primary text-white flex items-center justify-center mx-auto shadow-subtle">
-          <GraduationCap className="w-8 h-8" />
-        </div>
+    <div className="w-full max-w-md bg-surface border border-surface-border rounded-2xl p-6 sm:p-8 shadow-card space-y-6 text-center">
+      {/* Logo */}
+      <div className="w-14 h-14 rounded-2xl bg-primary text-white flex items-center justify-center mx-auto shadow-subtle">
+        <GraduationCap className="w-8 h-8" />
+      </div>
 
-        <div className="space-y-1.5">
-          <h1 className="text-xl sm:text-2xl font-heading font-extrabold text-text-main">
-            Đăng Nhập Chợ Pass SV
-          </h1>
-          <p className="text-xs sm:text-sm text-text-secondary">
-            Dành riêng cho cộng đồng sinh viên các trường đại học, cao đẳng toàn quốc.
+      <div className="space-y-1.5">
+        <h1 className="text-xl sm:text-2xl font-heading font-extrabold text-text-main">
+          Đăng Nhập Chợ Pass SV
+        </h1>
+        <p className="text-xs sm:text-sm text-text-secondary">
+          Dành riêng cho cộng đồng sinh viên các trường đại học, cao đẳng toàn quốc.
+        </p>
+      </div>
+
+      {/* CẢNH BÁO TRÌNH DUYỆT NHÚNG (ZALO, FACEBOOK WEBVIEW) */}
+      {isWebView && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl text-left space-y-3 dark:bg-amber-950/60 dark:border-amber-700">
+          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 font-bold text-xs">
+            <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+            <span>Phát hiện trình duyệt Zalo/Facebook</span>
+          </div>
+          <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+            Google bảo mật chặn đăng nhập trong app Zalo/Facebook/TikTok. Vui lòng mở bằng trình duyệt hệ thống bên ngoài để tiếp tục an toàn.
           </p>
-        </div>
-
-        {/* CẢNH BÁO TRÌNH DUYỆT NHÚNG (ZALO, FACEBOOK WEBVIEW) */}
-        {isWebView && (
-          <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl text-left space-y-3 dark:bg-amber-950/60 dark:border-amber-700">
-            <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 font-bold text-xs">
-              <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-              <span>Phát hiện trình duyệt Zalo/Facebook</span>
-            </div>
-            <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
-              Google bảo mật chặn đăng nhập trong app Zalo/Facebook. Vui lòng bấm vào dấu <strong>ba chấm (...)</strong> góc trên bên phải và chọn <strong>&ldquo;Mở bằng trình duyệt ngoài&rdquo;</strong> (Chrome hoặc Safari).
-            </p>
+          <div className="flex flex-col gap-2 pt-1">
+            {isAndroid && (
+              <a
+                href={getAndroidChromeIntentUrl()}
+                className="w-full h-9 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-medium text-xs flex items-center justify-center gap-2 transition-colors shadow-sm"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Mở bằng Google Chrome (Android)</span>
+              </a>
+            )}
             <Button
               variant="outline"
               size="sm"
               className="w-full text-xs"
-              leftIcon={copied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
+              leftIcon={
+                copied ? (
+                  <Check className="w-3.5 h-3.5 text-green-600" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )
+              }
               onClick={handleCopyLink}
             >
               {copied ? "Đã sao chép liên kết!" : "Sao chép liên kết trang"}
             </Button>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* LỖI NẾU CÓ */}
-        {errorMessage && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600 text-left flex items-start justify-between gap-2 dark:bg-red-950/50 dark:border-red-800 dark:text-red-300">
-            <span>{errorMessage}</span>
-            <button
-              onClick={clearError}
-              className="text-red-500 hover:text-red-700 font-bold text-sm leading-none"
-            >
-              &times;
-            </button>
+      {/* LỖI NẾU CÓ (Hiển thị bền vững, có nút tắt) */}
+      {errorMessage && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600 text-left flex items-start justify-between gap-2 dark:bg-red-950/50 dark:border-red-800 dark:text-red-300">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
+            <span className="leading-relaxed">{errorMessage}</span>
           </div>
-        )}
-
-        {/* NÚT TIẾP TỤC VỚI GOOGLE */}
-        <div className="space-y-3 pt-2">
           <button
             type="button"
-            onClick={handleGoogleLogin}
-            disabled={isLoading || isWebView}
-            className="w-full h-12 px-4 rounded-xl border border-surface-border bg-surface hover:bg-surface-muted text-text-main font-semibold text-sm flex items-center justify-center gap-3 transition-all shadow-subtle hover:border-primary/50 disabled:opacity-50 disabled:pointer-events-none"
+            onClick={clearError}
+            aria-label="Đóng thông báo lỗi"
+            className="text-red-500 hover:text-red-700 font-bold text-base leading-none p-0.5"
           >
-            {/* Google SVG Logo */}
+            &times;
+          </button>
+        </div>
+      )}
+
+      {/* NÚT TIẾP TỤC VỚI GOOGLE */}
+      <div className="space-y-3 pt-2">
+        <button
+          type="button"
+          onClick={handleGoogleLogin}
+          disabled={isBusy || isWebView}
+          aria-busy={isBusy}
+          className="w-full h-12 px-4 rounded-xl border border-surface-border bg-surface hover:bg-surface-muted text-text-main font-semibold text-sm flex items-center justify-center gap-3 transition-all shadow-subtle hover:border-primary/50 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+        >
+          {isBusy ? (
+            <Loader2 className="w-5 h-5 animate-spin text-primary" />
+          ) : (
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path
                 fill="#4285F4"
@@ -126,77 +186,52 @@ export default function LoginPage() {
                 d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
               />
             </svg>
-            <span>{isLoading ? "Đang kết nối..." : "Tiếp tục với Google"}</span>
-          </button>
+          )}
+          <span>{isBusy ? "Đang kết nối xác thực..." : "Tiếp tục với Google"}</span>
+        </button>
 
-          <p className="text-[11px] text-text-muted leading-relaxed">
-            Hệ thống chỉ sử dụng tài khoản Google để xác thực an toàn. Bạn không cần tạo hoặc nhớ thêm mật khẩu.
-          </p>
-        </div>
-
-        {/* ĐĂNG NHẬP TRẢI NGHIỆM NHANH (DEMO MODE) */}
-        <div className="pt-2 border-t border-surface-border space-y-3">
-          <div className="flex items-center gap-2">
-            <div className="h-[1px] bg-surface-border flex-1" />
-            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-              Hoặc dùng thử ngay
-            </span>
-            <div className="h-[1px] bg-surface-border flex-1" />
-          </div>
-
-          <div className="grid grid-cols-1 gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                loginWithDemo("verified");
-                window.location.href = "/";
-              }}
-              className="w-full py-2.5 px-3 rounded-xl bg-primary-light border border-primary/30 text-primary font-bold text-xs hover:bg-primary/20 transition-all flex items-center justify-center gap-2"
-            >
-              <span>🎓</span>
-              <span>Đăng nhập thử (Sinh viên đã duyệt thẻ SV)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                loginWithDemo("pending");
-                window.location.href = "/auth/onboarding";
-              }}
-              className="w-full py-2.5 px-3 rounded-xl bg-surface border border-surface-border text-text-secondary font-medium text-xs hover:bg-surface-muted transition-all flex items-center justify-center gap-2"
-            >
-              <span>📝</span>
-              <span>Đăng nhập thử (Sinh viên mới - Vào xác thực thẻ)</span>
-            </button>
-          </div>
-
-          <p className="text-[10px] text-text-muted">
-            Tài khoản dùng thử giúp bạn và bạn bè test ngay lập tức các chức năng Đăng bài, Chat 1-1, Đặt gạch 24h trên điện thoại.
-          </p>
-        </div>
-
-        {/* LƯU Ý BẢO MẬT & ĐIỀU KHOẢN */}
-        <div className="pt-4 border-t border-surface-border text-xs text-text-secondary space-y-2">
-          <div className="flex items-center justify-center gap-1.5 text-text-muted">
-            <Badge variant="verified" className="text-[10px] py-0">
-              Bảo mật 100%
-            </Badge>
-            <span>Tuân thủ Luật BV Dữ liệu cá nhân 2025</span>
-          </div>
-
-          <p className="text-[11px] text-text-muted">
-            Bằng việc tiếp tục, bạn đồng ý với{" "}
-            <Link href="/terms" className="text-primary hover:underline">
-              Điều khoản Dịch vụ
-            </Link>{" "}
-            và{" "}
-            <Link href="/privacy" className="text-primary hover:underline">
-              Chính sách Dữ liệu Cá nhân
-            </Link>{" "}
-            của Chợ Pass Sinh Viên.
-          </p>
-        </div>
+        <p className="text-[11px] text-text-muted leading-relaxed">
+          Hệ thống chỉ sử dụng tài khoản Google để xác thực an toàn. Bạn không cần tạo hoặc nhớ thêm mật khẩu.
+        </p>
       </div>
+
+      {/* LƯU Ý BẢO MẬT & ĐIỀU KHOẢN */}
+      <div className="pt-4 border-t border-surface-border text-xs text-text-secondary space-y-2">
+        <div className="flex items-center justify-center gap-1.5 text-text-muted">
+          <Badge variant="verified" className="text-[10px] py-0">
+            Bảo mật 100%
+          </Badge>
+          <span>Tuân thủ Luật BV Dữ liệu cá nhân 2025</span>
+        </div>
+
+        <p className="text-[11px] text-text-muted">
+          Bằng việc tiếp tục, bạn đồng ý với{" "}
+          <Link href="/terms" className="text-primary hover:underline">
+            Điều khoản Dịch vụ
+          </Link>{" "}
+          và{" "}
+          <Link href="/privacy" className="text-primary hover:underline">
+            Chính sách Dữ liệu Cá nhân
+          </Link>{" "}
+          của Chợ Pass Sinh Viên.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <div className="min-h-[75vh] flex items-center justify-center px-4 py-8">
+      <Suspense
+        fallback={
+          <div className="w-full max-w-md bg-surface border border-surface-border rounded-2xl p-8 shadow-card flex items-center justify-center min-h-[300px]">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          </div>
+        }
+      >
+        <LoginForm />
+      </Suspense>
     </div>
   );
 }

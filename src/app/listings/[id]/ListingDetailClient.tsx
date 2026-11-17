@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { authFetch } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
@@ -95,12 +96,10 @@ export function ListingDetailClient({
     setIsLoadingContact(true);
     setContactError(null);
     try {
-      const res = await fetch("/api/listings/contact", {
+      const res = await authFetch("/api/listings/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          buyerId: user.uid,
-          sellerId: listing.seller.id,
           listingId: listing.id,
         }),
       });
@@ -125,15 +124,16 @@ export function ListingDetailClient({
   };
 
   const handleConfirmReservation = async () => {
+    if (!user) {
+      alert("Vui lòng đăng nhập để đặt gạch món đồ.");
+      return;
+    }
     try {
-      await fetch("/api/reservations/create", {
+      await authFetch("/api/reservations/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           listingId: listing.id,
-          buyerId: user?.uid || "demo-buyer-id",
-          buyerName: profile?.displayName || "Sinh viên mua hàng",
-          sellerId: listing.seller.id,
           deliveryMethod: reserveMethod,
           preferredSchedule: preferredTime,
         }),

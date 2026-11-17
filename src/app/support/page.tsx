@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { authFetch } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { HelpCircle, Send, CheckCircle2, ShieldAlert } from "lucide-react";
@@ -17,14 +18,16 @@ export default function SupportPage() {
 
   const handleSubmitAppeal = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      alert("Vui lòng đăng nhập trước khi gửi yêu cầu hỗ trợ.");
+      return;
+    }
     setIsSubmitting(true);
     try {
-      await fetch("/api/appeals", {
+      await authFetch("/api/appeals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: user?.uid || "demo-user-id",
-          userEmail: user?.email || "student@example.edu.vn",
           targetType,
           targetId: targetId || "current-user",
           appealReason,

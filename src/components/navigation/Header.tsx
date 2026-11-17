@@ -2,13 +2,100 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { GraduationCap, MapPin, Plus, Search } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import Image from "next/image";
+import { usePathname } from "next/navigation";
+import {
+  GraduationCap,
+  MapPin,
+  Plus,
+  Search,
+  User,
+  ShieldCheck,
+  Package,
+  Settings,
+  LogOut,
+  ChevronDown,
+  ShieldAlert,
+} from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { Badge } from "@/components/ui/Badge";
+
+function getInitials(name?: string | null): string {
+  if (!name) return "SV";
+  const trimmed = name.trim();
+  if (!trimmed) return "SV";
+  const cleaned = trimmed.replace(/^[^a-zA-Z0-9\u00C0-\u024F\u1EA0-\u1EF9]+/i, "");
+  return cleaned.charAt(0).toUpperCase() || "SV";
+}
 
 export function Header() {
-  const { user, profile, logout } = useAuth();
+  const pathname = usePathname();
+  const { user, profile, role, isLoading, logout } = useAuth();
+  const [dropdownOpen, setDropdownOpen] = React.useState(false);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
+
+  // Đóng dropdown khi click ra ngoài hoặc nhấn Esc
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setDropdownOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDropdownOpen(false);
+      }
+    };
+
+    if (dropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("keydown", handleKeyDown);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [dropdownOpen]);
+
+  // Đóng dropdown khi chuyển trang
+  React.useEffect(() => {
+    setDropdownOpen(false);
+  }, [pathname]);
+
+  const loginHref =
+    pathname && pathname !== "/"
+      ? `/auth/login?next=${encodeURIComponent(pathname)}`
+      : "/auth/login";
+
+  const postListingHref = !user
+    ? `/auth/login?next=${encodeURIComponent("/listings/new")}`
+    : role === "admin" || role === "verified" || profile?.verificationStatus === "approved"
+    ? "/listings/new"
+    : "/auth/onboarding";
+
+  const verificationStatus = profile?.verificationStatus || "none";
+
+  const renderVerificationBadge = () => {
+    switch (verificationStatus) {
+      case "approved":
+        return <Badge variant="verified">Đã xác minh SV</Badge>;
+      case "pending":
+        return <Badge variant="pickup">Đang chờ duyệt</Badge>;
+      case "rejected":
+        return <Badge variant="urgent">Bị từ chối</Badge>;
+      case "expired":
+        return <Badge variant="default">Thẻ hết hạn</Badge>;
+      default:
+        return <Badge variant="outline">Chưa xác minh</Badge>;
+    }
+  };
+
   return (
     <header className="sticky top-0 z-40 w-full bg-surface/90 backdrop-blur-md border-b border-surface-border">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
@@ -32,15 +119,13 @@ export function Header() {
           </div>
         </Link>
 
-        {/* Nút chọn khu vực & trường nhanh (Header Quick Selector) */}
-        <button
-          type="button"
-          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-muted hover:bg-surface-border text-text-main text-xs font-semibold border border-surface-border transition-colors max-w-xs truncate"
-          title="Chọn khu vực & trường học của bạn"
-        >
+        {/* Nút hiển thị trường / khu vực động */}
+        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-muted text-text-main text-xs font-semibold border border-surface-border max-w-xs truncate">
           <MapPin className="w-3.5 h-3.5 text-primary shrink-0" />
-          <span className="truncate">ĐHQG TP.HCM · P. Linh Trung</span>
-        </button>
+          <span className="truncate">
+            {profile?.schoolName || "Sinh viên Toàn quốc"}
+          </span>
+        </div>
 
         {/* Cụm công cụ bên phải */}
         <div className="flex items-center gap-2">
@@ -48,17 +133,17 @@ export function Header() {
           <Link
             href="/search"
             aria-label="Tìm kiếm món đồ"
-            className="sm:hidden w-9 h-9 rounded-lg border border-surface-border flex items-center justify-center text-text-secondary hover:text-text-main"
+            className="sm:hidden w-9 h-9 rounded-lg border border-surface-border flex items-center justify-center text-text-secondary hover:text-text-main transition-colors"
           >
             <Search className="w-4 h-4" />
           </Link>
 
-          {/* Đổi màu & Sáng/Tối */}
+          {/* Đổi màu Sáng/Tối */}
           <ThemeToggle />
 
-          {/* Nút Đăng tin nổi bật trên Desktop */}
+          {/* Nút Đăng tin nổi bật */}
           <Link
-            href="/listings/new"
+            href={postListingHref}
             className="hidden md:inline-flex items-center justify-center font-medium rounded-lg transition-colors h-9 px-3 text-xs bg-primary text-white hover:bg-primary-hover shadow-subtle gap-1.5"
           >
             <Plus className="w-4 h-4" />
@@ -66,32 +151,138 @@ export function Header() {
           </Link>
 
           {/* Trạng thái Đăng nhập / Tài khoản */}
-          {user ? (
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <Link
-                href="/my-listings"
-                className="px-2.5 sm:px-3 text-xs h-9 inline-flex items-center gap-1.5 font-bold text-primary bg-surface-muted hover:bg-surface-border border border-surface-border rounded-lg transition-colors"
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="max-w-[80px] sm:max-w-[120px] truncate">
-                  {profile?.displayName?.split(" ").slice(-1)[0] || "Tài khoản"}
-                </span>
-              </Link>
+          {isLoading ? (
+            /* Skeleton cùng kích thước nút, chống giật/nhấp nháy */
+            <div
+              className="w-24 h-9 bg-surface-muted animate-pulse rounded-lg border border-surface-border"
+              aria-label="Đang tải trạng thái đăng nhập"
+            />
+          ) : user ? (
+            <div className="relative" ref={dropdownRef}>
               <button
                 type="button"
-                onClick={logout}
-                title="Đăng xuất"
-                className="text-[11px] text-text-muted hover:text-danger-solid px-1.5 py-1 font-medium transition-colors"
+                onClick={() => setDropdownOpen((prev) => !prev)}
+                aria-expanded={dropdownOpen}
+                aria-haspopup="menu"
+                className="flex items-center gap-2 p-1 pl-2 pr-2.5 rounded-xl border border-surface-border bg-surface hover:bg-surface-muted transition-colors text-left"
               >
-                Thoát
+                {/* Avatar người dùng */}
+                <div className="w-7 h-7 rounded-full overflow-hidden bg-primary-light text-primary flex items-center justify-center font-bold text-xs shrink-0 border border-primary/20">
+                  {profile?.photoURL ? (
+                    <Image
+                      src={profile.photoURL}
+                      alt={profile.displayName || "Avatar"}
+                      width={28}
+                      height={28}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span>{getInitials(profile?.displayName)}</span>
+                  )}
+                </div>
+
+                <div className="hidden sm:flex flex-col text-left max-w-[110px]">
+                  <span className="text-xs font-semibold text-text-main truncate">
+                    {profile?.displayName || "Sinh viên"}
+                  </span>
+                  <span className="text-[10px] text-text-muted leading-tight truncate">
+                    {role === "admin" ? "Quản trị viên" : role === "verified" ? "Đã duyệt thẻ" : "Chưa duyệt"}
+                  </span>
+                </div>
+
+                <ChevronDown className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 ${dropdownOpen ? "rotate-180" : ""}`} />
               </button>
+
+              {/* Menu Dropdown Tài khoản */}
+              {dropdownOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 mt-2 w-64 bg-surface rounded-2xl shadow-elevated border border-surface-border p-2 space-y-1 z-50 animate-in fade-in-50 slide-in-from-top-2 duration-150"
+                >
+                  {/* Header trong Dropdown */}
+                  <div className="p-3 border-b border-surface-border space-y-1.5">
+                    <p className="font-heading font-bold text-sm text-text-main truncate">
+                      {profile?.displayName || "Sinh viên"}
+                    </p>
+                    <p className="text-xs text-text-secondary truncate">
+                      {profile?.email || user.email || "Chưa có email"}
+                    </p>
+                    <div className="pt-1 flex items-center gap-1.5">
+                      {renderVerificationBadge()}
+                      {role === "admin" && (
+                        <Badge variant="verified">Admin</Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Danh sách mục menu */}
+                  <div className="py-1">
+                    <Link
+                      href="/my-listings"
+                      role="menuitem"
+                      className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-text-main hover:bg-surface-muted rounded-xl transition-colors"
+                    >
+                      <Package className="w-4 h-4 text-primary shrink-0" />
+                      <span>Tin của tôi</span>
+                    </Link>
+
+                    {verificationStatus !== "approved" && (
+                      <Link
+                        href="/auth/onboarding"
+                        role="menuitem"
+                        className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded-xl transition-colors"
+                      >
+                        <ShieldCheck className="w-4 h-4 shrink-0" />
+                        <span>Xác minh thẻ sinh viên</span>
+                      </Link>
+                    )}
+
+                    {role === "admin" && (
+                      <Link
+                        href="/admin/verifications"
+                        role="menuitem"
+                        className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-primary hover:bg-primary-light/50 rounded-xl transition-colors"
+                      >
+                        <ShieldAlert className="w-4 h-4 shrink-0" />
+                        <span>Quản trị duyệt thẻ</span>
+                      </Link>
+                    )}
+
+                    <Link
+                      href="/settings"
+                      role="menuitem"
+                      className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-text-main hover:bg-surface-muted rounded-xl transition-colors"
+                    >
+                      <Settings className="w-4 h-4 text-text-secondary shrink-0" />
+                      <span>Cài đặt tài khoản</span>
+                    </Link>
+                  </div>
+
+                  <div className="pt-1 border-t border-surface-border">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={async () => {
+                        setDropdownOpen(false);
+                        await logout();
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-danger-solid hover:bg-danger-subtle/20 rounded-xl transition-colors"
+                    >
+                      <LogOut className="w-4 h-4 shrink-0" />
+                      <span>Đăng xuất</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <Link
-              href="/auth/login"
+              href={loginHref}
               className="inline-flex items-center justify-center font-medium rounded-lg transition-colors h-9 px-3 text-xs bg-surface-muted text-text-main hover:bg-surface-border border border-surface-border cursor-pointer select-none"
             >
-              Đăng nhập
+              <User className="w-3.5 h-3.5 mr-1.5 text-text-secondary" />
+              <span>Đăng nhập</span>
             </Link>
           )}
         </div>

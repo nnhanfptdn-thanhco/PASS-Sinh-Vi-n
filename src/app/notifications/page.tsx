@@ -11,6 +11,7 @@ import {
   CheckCheck,
 } from "lucide-react";
 import Link from "next/link";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 
 interface NotificationItem {
   id: string;
@@ -63,7 +64,8 @@ export default function NotificationsPage() {
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+    <RequireAuth>
+      <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-surface-border pb-5">
         <div>
@@ -154,5 +156,6 @@ export default function NotificationsPage() {
         </div>
       )}
     </div>
+    </RequireAuth>
   );
 }

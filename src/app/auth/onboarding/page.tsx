@@ -3,6 +3,9 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { storage, authFetch } from "@/lib/firebase/client";
+import { ref, uploadBytes } from "firebase/storage";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
@@ -22,7 +25,7 @@ import universitiesData from "../../../../data/universities_vietnam.json";
 import provincesData from "../../../../data/provinces_34.json";
 import wardsData from "../../../../data/communes_wards.json";
 
-export default function OnboardingPage() {
+function OnboardingContent() {
   const router = useRouter();
   const { user, refreshClaims } = useAuth();
 
@@ -38,16 +41,16 @@ export default function OnboardingPage() {
   const [formData, setFormData] = React.useState({
     realName: user?.displayName || "",
     displayName: user?.displayName || "",
-    schoolCode: "QSX",
-    campusId: "c1",
-    faculty: "Khoa Khoa học & Kỹ thuật Máy tính",
-    studentClass: "K2021",
+    schoolCode: universitiesData[0]?.code || "QSX",
+    campusId: universitiesData[0]?.campuses[0]?.id || "c1",
+    faculty: "",
+    studentClass: "",
     studentId: "",
     zaloPhone: "",
     altPhone: "",
-    provinceCode: "79",
-    wardCode: "27139",
-    dormOrAddress: "KTX Bách Khoa",
+    provinceCode: universitiesData[0]?.provinceCode || "79",
+    wardCode: universitiesData[0]?.wardCode || "27139",
+    dormOrAddress: "",
     isGraduating: false,
   });
 
@@ -88,6 +91,10 @@ export default function OnboardingPage() {
   };
 
   const handleSubmitVerification = async () => {
+    if (!user) {
+      alert("Vui lòng đăng nhập trước khi gửi hồ sơ xác minh.");
+      return;
+    }
     if (!cardImageBlob || !formData.studentId || !formData.zaloPhone) {
       alert("Vui lòng điền đầy đủ các mục bắt buộc và tải ảnh thẻ.");
       return;
@@ -95,27 +102,37 @@ export default function OnboardingPage() {
 
     setIsSubmitting(true);
     try {
-      // Gửi yêu cầu xác thực tới Server Route / API
-      const res = await fetch("/api/verifications/submit", {
+      // 1. Tải ảnh thẻ sinh viên đã nén trực tiếp lên Cloud Storage
+      const storagePath = `private/cards/${user.uid}/front.webp`;
+      const cardFileRef = ref(storage, storagePath);
+      await uploadBytes(cardFileRef, cardImageBlob, {
+        contentType: "image/webp",
+        customMetadata: {
+          uploadedBy: user.uid,
+          uploadedAt: new Date().toISOString(),
+        },
+      });
+
+      // 2. Gửi metadata xác thực tới Server Route qua authFetch (không lưu base64 trong Firestore)
+      const res = await authFetch("/api/verifications/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: user?.uid || "demo-user-id",
-          userEmail: user?.email || "student@example.edu.vn",
           ...formData,
-          cardImageBase64: cardImagePreview,
+          cardStoragePath: storagePath,
         }),
       });
 
       if (!res.ok) {
-        throw new Error("Gửi hồ sơ thất bại");
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Gửi hồ sơ xác minh thất bại");
       }
 
       await refreshClaims();
       setSuccessMessage(true);
-    } catch {
-      // Mock thành công cho luồng demo/test
-      setSuccessMessage(true);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Đã xảy ra lỗi khi gửi hồ sơ xác minh";
+      alert(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -557,5 +574,13 @@ export default function OnboardingPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <RequireAuth>
+      <OnboardingContent />
+    </RequireAuth>
   );
 }

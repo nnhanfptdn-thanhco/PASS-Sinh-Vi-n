@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { formatCurrencyVND } from "@/lib/utils";
@@ -104,7 +105,8 @@ export default function MessagesPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
+    <RequireAuth>
+      <div className="max-w-6xl mx-auto px-4 py-6">
       <div className="bg-surface border border-surface-border rounded-2xl shadow-card overflow-hidden h-[80vh] flex flex-col md:flex-row">
         {/* CỘT DANH SÁCH HỘI THOẠI BÊN TRÁI */}
         <div className="w-full md:w-80 border-r border-surface-border flex flex-col shrink-0">
@@ -251,5 +253,6 @@ export default function MessagesPage() {
         </div>
       </div>
     </div>
+    </RequireAuth>
   );
 }

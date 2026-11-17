@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useAuth } from "@/lib/auth/AuthContext";
+import { authFetch } from "@/lib/firebase/client";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { formatCurrencyVND } from "@/lib/utils";
@@ -33,7 +34,6 @@ interface MyListingItem {
 }
 
 export default function MyListingsPage() {
-  const { user } = useAuth();
   const [activeTab, setActiveTab] = React.useState<"active" | "reserved" | "sold" | "hidden">("active");
   const [listings, setListings] = React.useState<MyListingItem[]>([]);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -92,12 +92,11 @@ export default function MyListingsPage() {
     setIsLoading(true);
     setActionMessage(null);
     try {
-      const res = await fetch("/api/listings/manage", {
+      const res = await authFetch("/api/listings/manage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           listingId: id,
-          sellerId: user?.uid || "demo-seller-id",
           action,
           newStatus,
         }),
@@ -142,7 +141,8 @@ export default function MyListingsPage() {
   });
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+    <RequireAuth>
+      <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       {/* Tiêu đề & Nút đăng tin nhanh */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-surface-border pb-5">
         <div>
@@ -349,5 +349,6 @@ export default function MyListingsPage() {
         </div>
       )}
     </div>
+    </RequireAuth>
   );
 }

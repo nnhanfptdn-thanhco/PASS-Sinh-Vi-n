@@ -26,6 +26,7 @@ import {
   Eye,
 } from "lucide-react";
 import { compressAndAnalyzeImage } from "@/lib/utils/image";
+import { RequireVerified } from "@/components/auth/RequireVerified";
 import categoriesData from "../../../../data/categories.json";
 import universitiesData from "../../../../data/universities_vietnam.json";
 
@@ -137,12 +138,17 @@ export default function NewListingPage() {
       return;
     }
 
+    if (!user) {
+      alert("Vui lòng đăng nhập để đăng tin.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const selectedSchool = universitiesData[0];
       const payload = {
-        sellerId: user?.uid || "demo-seller-id",
-        sellerName: profile?.displayName || user?.displayName || "Sinh viên K21",
+        sellerId: user.uid,
+        sellerName: profile?.displayName || user.displayName || "Sinh viên",
         title,
         categoryId,
         subcategory,
@@ -201,7 +207,8 @@ export default function NewListingPage() {
   const currentCategory = categoriesData.find((c) => c.id === categoryId);
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+    <RequireVerified>
+      <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
       {/* Tiêu đề & Thanh tiến độ 5 bước */}
       <div className="text-center space-y-2">
         <h1 className="text-2xl sm:text-3xl font-heading font-extrabold text-text-main">
@@ -919,5 +926,6 @@ export default function NewListingPage() {
         )}
       </div>
     </div>
+    </RequireVerified>
   );
 }
