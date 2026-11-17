@@ -5,8 +5,10 @@ import Link from "next/link";
 import { GraduationCap, MapPin, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useAuth } from "@/lib/auth/AuthContext";
 
 export function Header() {
+  const { user, profile, logout } = useAuth();
   return (
     <header className="sticky top-0 z-40 w-full bg-surface/90 backdrop-blur-md border-b border-surface-border">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
@@ -65,12 +67,37 @@ export function Header() {
             </Button>
           </Link>
 
-          {/* Nút Đăng nhập / Tài khoản */}
-          <Link href="/auth/login">
-            <Button variant="secondary" size="sm" className="px-2.5 sm:px-3 text-xs">
-              Đăng nhập
-            </Button>
-          </Link>
+          {/* Trạng thái Đăng nhập / Tài khoản */}
+          {user ? (
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <Link href="/my-listings">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="px-2.5 sm:px-3 text-xs flex items-center gap-1.5 font-bold text-primary"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="max-w-[80px] sm:max-w-[120px] truncate">
+                    {profile?.displayName?.split(" ").slice(-1)[0] || "Tài khoản"}
+                  </span>
+                </Button>
+              </Link>
+              <button
+                type="button"
+                onClick={logout}
+                title="Đăng xuất"
+                className="text-[11px] text-text-muted hover:text-danger-solid px-1.5 py-1 font-medium transition-colors"
+              >
+                Thoát
+              </button>
+            </div>
+          ) : (
+            <Link href="/auth/login">
+              <Button variant="secondary" size="sm" className="px-2.5 sm:px-3 text-xs">
+                Đăng nhập
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
     </header>

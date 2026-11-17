@@ -19,7 +19,7 @@ export function MobileBottomNav() {
       isSpecial: true,
     },
     { label: "Tin nhắn", href: "/messages", icon: MessageSquare },
-    { label: "Tôi", href: "/profile", icon: User },
+    { label: "Tôi", href: "/settings", icon: User },
   ];
 
   return (

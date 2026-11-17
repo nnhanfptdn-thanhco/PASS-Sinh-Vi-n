@@ -36,6 +36,7 @@ export default function LoginPage() {
     setIsLoading(true);
     await loginWithGoogle();
     setIsLoading(false);
+    window.location.href = "/";
   };
 
   const handleCopyLink = async () => {
@@ -148,7 +149,7 @@ export default function LoginPage() {
               type="button"
               onClick={() => {
                 loginWithDemo("verified");
-                router.push("/");
+                window.location.href = "/";
               }}
               className="w-full py-2.5 px-3 rounded-xl bg-primary-light border border-primary/30 text-primary font-bold text-xs hover:bg-primary/20 transition-all flex items-center justify-center gap-2"
             >
@@ -160,7 +161,7 @@ export default function LoginPage() {
               type="button"
               onClick={() => {
                 loginWithDemo("pending");
-                router.push("/auth/onboarding");
+                window.location.href = "/auth/onboarding";
               }}
               className="w-full py-2.5 px-3 rounded-xl bg-surface border border-surface-border text-text-secondary font-medium text-xs hover:bg-surface-muted transition-all flex items-center justify-center gap-2"
             >
