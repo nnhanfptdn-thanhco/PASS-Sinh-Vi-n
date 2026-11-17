@@ -34,14 +34,12 @@ export function EmptyState({
       </div>
 
       {actionHref ? (
-        <Link href={actionHref}>
-          <Button
-            variant="primary"
-            size="md"
-            leftIcon={<PlusCircle className="w-4 h-4" />}
-          >
-            {actionText}
-          </Button>
+        <Link
+          href={actionHref}
+          className="inline-flex items-center justify-center font-medium rounded-lg transition-colors h-11 px-4 text-sm bg-primary text-white hover:bg-primary-hover shadow-subtle gap-2 cursor-pointer"
+        >
+          <PlusCircle className="w-4 h-4" />
+          <span>{actionText}</span>
         </Link>
       ) : onAction ? (
         <Button

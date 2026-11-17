@@ -57,30 +57,25 @@ export function Header() {
           <ThemeToggle />
 
           {/* Nút Đăng tin nổi bật trên Desktop */}
-          <Link href="/listings/new" className="hidden md:inline-flex">
-            <Button
-              variant="primary"
-              size="sm"
-              leftIcon={<Plus className="w-4 h-4" />}
-            >
-              Đăng tin ngay
-            </Button>
+          <Link
+            href="/listings/new"
+            className="hidden md:inline-flex items-center justify-center font-medium rounded-lg transition-colors h-9 px-3 text-xs bg-primary text-white hover:bg-primary-hover shadow-subtle gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Đăng tin ngay</span>
           </Link>
 
           {/* Trạng thái Đăng nhập / Tài khoản */}
           {user ? (
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <Link href="/my-listings">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="px-2.5 sm:px-3 text-xs flex items-center gap-1.5 font-bold text-primary"
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="max-w-[80px] sm:max-w-[120px] truncate">
-                    {profile?.displayName?.split(" ").slice(-1)[0] || "Tài khoản"}
-                  </span>
-                </Button>
+              <Link
+                href="/my-listings"
+                className="px-2.5 sm:px-3 text-xs h-9 inline-flex items-center gap-1.5 font-bold text-primary bg-surface-muted hover:bg-surface-border border border-surface-border rounded-lg transition-colors"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="max-w-[80px] sm:max-w-[120px] truncate">
+                  {profile?.displayName?.split(" ").slice(-1)[0] || "Tài khoản"}
+                </span>
               </Link>
               <button
                 type="button"
@@ -92,10 +87,11 @@ export function Header() {
               </button>
             </div>
           ) : (
-            <Link href="/auth/login">
-              <Button variant="secondary" size="sm" className="px-2.5 sm:px-3 text-xs">
-                Đăng nhập
-              </Button>
+            <Link
+              href="/auth/login"
+              className="inline-flex items-center justify-center font-medium rounded-lg transition-colors h-9 px-3 text-xs bg-surface-muted text-text-main hover:bg-surface-border border border-surface-border cursor-pointer select-none"
+            >
+              Đăng nhập
             </Link>
           )}
         </div>

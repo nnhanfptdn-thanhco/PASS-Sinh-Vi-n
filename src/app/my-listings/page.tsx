@@ -154,10 +154,12 @@ export default function MyListingsPage() {
           </p>
         </div>
 
-        <Link href="/listings/new">
-          <Button variant="primary" size="sm" leftIcon={<PlusCircle className="w-4 h-4" />}>
-            Đăng Món Đồ Mới
-          </Button>
+        <Link
+          href="/listings/new"
+          className="inline-flex items-center justify-center font-medium rounded-lg transition-colors h-9 px-3 text-xs bg-primary text-white hover:bg-primary-hover shadow-subtle gap-1.5 cursor-pointer shrink-0"
+        >
+          <PlusCircle className="w-4 h-4" />
+          <span>Đăng Món Đồ Mới</span>
         </Link>
       </div>
 
@@ -200,10 +202,12 @@ export default function MyListingsPage() {
           <p className="text-sm font-semibold text-text-main">
             Bạn chưa có tin nào trong mục này.
           </p>
-          <Link href="/listings/new">
-            <Button variant="outline" size="sm" leftIcon={<PlusCircle className="w-4 h-4" />}>
-              Đăng tin ngay
-            </Button>
+          <Link
+            href="/listings/new"
+            className="inline-flex items-center justify-center font-medium rounded-lg transition-colors h-9 px-3 text-xs border border-primary text-primary hover:bg-primary-light gap-1.5 cursor-pointer"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Đăng tin ngay</span>
           </Link>
         </div>
       ) : (

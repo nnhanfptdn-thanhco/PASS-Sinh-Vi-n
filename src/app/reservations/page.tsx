@@ -240,10 +240,12 @@ export default function ReservationsPage() {
 
             {/* Nút hành động */}
             <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-              <Link href="/messages">
-                <Button variant="secondary" size="sm" leftIcon={<MessageSquare className="w-3.5 h-3.5" />}>
-                  Nhắn tin
-                </Button>
+              <Link
+                href="/messages"
+                className="inline-flex items-center justify-center font-medium rounded-lg transition-colors h-9 px-3 text-xs bg-surface-muted text-text-main hover:bg-surface-border border border-surface-border gap-1.5"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                <span>Nhắn tin</span>
               </Link>
 
               {item.status === "pending" && item.role === "seller" && (

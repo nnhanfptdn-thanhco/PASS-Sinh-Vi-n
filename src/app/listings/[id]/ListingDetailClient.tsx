@@ -351,10 +351,11 @@ export function ListingDetailClient({
                 </div>
               </div>
 
-              <Link href={`/sellers/${listing.seller.id}`}>
-                <Button variant="secondary" size="sm">
-                  Xem hồ sơ
-                </Button>
+              <Link
+                href={`/sellers/${listing.seller.id}`}
+                className="inline-flex items-center justify-center font-medium rounded-lg transition-colors h-9 px-3 text-xs bg-surface-muted text-text-main hover:bg-surface-border border border-surface-border"
+              >
+                Xem hồ sơ
               </Link>
             </div>
           </div>

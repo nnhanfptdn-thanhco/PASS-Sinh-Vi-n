@@ -46,10 +46,12 @@ export default function HomePage() {
             </p>
           </div>
         </div>
-        <Link href="/listings/new" className="shrink-0">
-          <Button variant="primary" size="sm" rightIcon={<ArrowRight className="w-4 h-4" />}>
-            Đăng món đồ ngay
-          </Button>
+        <Link
+          href="/listings/new"
+          className="shrink-0 inline-flex items-center justify-center font-medium rounded-lg transition-colors h-9 px-3 text-xs bg-primary text-white hover:bg-primary-hover shadow-subtle gap-1.5 cursor-pointer"
+        >
+          <span>Đăng món đồ ngay</span>
+          <ArrowRight className="w-4 h-4" />
         </Link>
       </div>
 
