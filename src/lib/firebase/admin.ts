@@ -1,5 +1,5 @@
 import "server-only";
-import { getApps, initializeApp, cert, type ServiceAccount } from "firebase-admin/app";
+import { getApps, initializeApp, cert, type App, type ServiceAccount } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
@@ -29,37 +29,21 @@ if (isEmulator) {
       : "127.0.0.1:9199");
 }
 
-function initAdminApp() {
+function initAdminApp(): App {
   if (getApps().length > 0) {
     return getApps()[0];
   }
 
   const projectId =
     process.env.FIREBASE_PROJECT_ID ||
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
+    "cho-pass-sv-build";
 
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
-  if (!projectId) {
-    throw new Error(
-      "[Firebase Admin]: Thiếu biến môi trường FIREBASE_PROJECT_ID (hoặc NEXT_PUBLIC_FIREBASE_PROJECT_ID)."
-    );
-  }
-
-  // Khi kết nối Emulator, chỉ cần projectId
-  if (isEmulator) {
-    return initializeApp({ projectId });
-  }
-
-  // Khi ở môi trường Production hoặc kết nối Firebase thật, bắt buộc phải có Service Account
-  if (!clientEmail || !privateKey) {
-    if (isProduction) {
-      throw new Error(
-        "[Bảo Mật Nghiêm Ngặt]: Môi trường Production bắt buộc phải cung cấp FIREBASE_CLIENT_EMAIL và FIREBASE_PRIVATE_KEY trong Environment Variables."
-      );
-    }
-    // Nếu ở môi trường local nhưng không bật emulator, vẫn cho phép ADC nếu có
+  // Khi kết nối Emulator hoặc trong quá trình build tĩnh trên hosting
+  if (isEmulator || (!clientEmail && !privateKey)) {
     return initializeApp({ projectId });
   }
 
