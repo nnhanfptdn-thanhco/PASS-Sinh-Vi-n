@@ -27,6 +27,8 @@ import {
 } from "lucide-react";
 import { compressAndAnalyzeImage } from "@/lib/utils/image";
 import { RequireVerified } from "@/components/auth/RequireVerified";
+import { storage, authFetch } from "@/lib/firebase/client";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import categoriesData from "../../../../data/categories.json";
 import universitiesData from "../../../../data/universities_vietnam.json";
 
@@ -39,6 +41,7 @@ export default function NewListingPage() {
 
   // Form State
   const [images, setImages] = React.useState<string[]>([]);
+  const [imageBlobs, setImageBlobs] = React.useState<Blob[]>([]);
   const [coverIndex, setCoverIndex] = React.useState(0);
   const [title, setTitle] = React.useState("");
   const [categoryId, setCategoryId] = React.useState("dien-may");
@@ -109,6 +112,7 @@ export default function NewListingPage() {
       try {
         const compressed = await compressAndAnalyzeImage(files[i], 1600, 0.85);
         setImages((prev) => [...prev, compressed.dataUrl]);
+        setImageBlobs((prev) => [...prev, compressed.blob]);
       } catch (err) {
         console.error("Lỗi nén ảnh:", err);
       }
@@ -117,6 +121,7 @@ export default function NewListingPage() {
 
   const removeImage = (index: number) => {
     setImages((prev) => prev.filter((_, i) => i !== index));
+    setImageBlobs((prev) => prev.filter((_, i) => i !== index));
     if (coverIndex === index) setCoverIndex(0);
     else if (coverIndex > index) setCoverIndex((prev) => prev - 1);
   };
@@ -145,10 +150,31 @@ export default function NewListingPage() {
 
     setIsSubmitting(true);
     try {
+      // 1. Tải ảnh lên Firebase Storage (public/listings/{tempId}/{index}.webp)
+      const tempId = `l_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const uploadedUrls: string[] = [];
+
+      for (let i = 0; i < imageBlobs.length; i++) {
+        const fileRef = ref(storage, `public/listings/${tempId}/${i}.webp`);
+        await uploadBytes(fileRef, imageBlobs[i], {
+          contentType: "image/webp",
+          customMetadata: {
+            uploadedBy: user.uid,
+            uploadedAt: new Date().toISOString(),
+          },
+        });
+        const downloadUrl = await getDownloadURL(fileRef);
+        uploadedUrls.push(downloadUrl);
+      }
+
+      // Đưa ảnh bìa (coverIndex) lên đầu mảng
+      if (coverIndex > 0 && coverIndex < uploadedUrls.length) {
+        const [coverImg] = uploadedUrls.splice(coverIndex, 1);
+        uploadedUrls.unshift(coverImg);
+      }
+
       const selectedSchool = universitiesData[0];
       const payload = {
-        sellerId: user.uid,
-        sellerName: profile?.displayName || user.displayName || "Sinh viên",
         title,
         categoryId,
         subcategory,
@@ -179,10 +205,10 @@ export default function NewListingPage() {
         itemDimensions: isBulky
           ? { weight: itemWeight, dimensions: itemDimensions }
           : null,
-        images,
+        images: uploadedUrls,
       };
 
-      const res = await fetch("/api/listings/create", {
+      const res = await authFetch("/api/listings/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
