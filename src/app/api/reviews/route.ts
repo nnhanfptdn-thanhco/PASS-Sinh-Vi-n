@@ -1,18 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser, errorResponse } from "@/lib/auth/server";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import { z } from "zod";
+
+const reviewSchema = z.object({
+  reservationId: z.string().min(1, "Thiếu reservationId"),
+  rating: z.number().min(1, "Đánh giá tối thiểu 1 sao").max(5, "Đánh giá tối đa 5 sao"),
+  comment: z.string().max(500, "Bình luận tối đa 500 ký tự").optional(),
+});
 
 export async function POST(req: NextRequest) {
   try {
-    const { reservationId, reviewerId, reviewerName, rating, comment } =
-      await req.json();
+    const token = await requireUser(req);
+    const reviewerId = token.uid;
+    const reviewerName = token.name || "Sinh viên";
 
-    if (!reservationId || !reviewerId || !rating) {
-      return NextResponse.json({ error: "Thiếu thông tin đánh giá" }, { status: 400 });
+    const body = await req.json();
+    const parsed = reviewSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues.map((i) => i.message).join(", ") },
+        { status: 400 }
+      );
     }
 
-    if (rating < 1 || rating > 5) {
-      return NextResponse.json({ error: "Số sao đánh giá phải từ 1 đến 5" }, { status: 400 });
-    }
+    const { reservationId, rating, comment } = parsed.data;
 
     // 1. Kiểm tra giao dịch đã hoàn tất chưa
     const resSnap = await adminDb.collection("reservations").doc(reservationId).get();
@@ -59,7 +71,7 @@ export async function POST(req: NextRequest) {
       reservationId,
       listingId: resData?.listingId,
       reviewerId,
-      reviewerName: reviewerName || "Sinh viên",
+      reviewerName,
       targetUserId,
       rating: Math.round(rating),
       comment: comment?.trim() || "",
@@ -92,7 +104,6 @@ export async function POST(req: NextRequest) {
       message: "Cảm ơn bạn đã gửi đánh giá! Nhận xét của bạn giúp cộng đồng sinh viên an tâm hơn.",
     });
   } catch (err) {
-    console.error("Lỗi gửi đánh giá:", err);
-    return NextResponse.json({ error: "Lỗi nội bộ máy chủ" }, { status: 500 });
+    return errorResponse(err);
   }
 }

@@ -1,21 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireVerified, errorResponse } from "@/lib/auth/server";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import { z } from "zod";
 
 const MAX_PENDING_RESERVATIONS_PER_LISTING = 3;
 
+const createReservationSchema = z.object({
+  listingId: z.string().min(1, "Thiếu listingId"),
+  deliveryMethod: z.string().optional(),
+  preferredSchedule: z.string().optional(),
+});
+
 export async function POST(req: NextRequest) {
   try {
-    const {
-      listingId,
-      buyerId,
-      buyerName,
-      sellerId,
-      deliveryMethod,
-      preferredSchedule,
-    } = await req.json();
+    const token = await requireVerified(req);
+    const buyerId = token.uid;
+    const buyerName = token.name || "Sinh viên";
 
-    if (!listingId || !buyerId || !sellerId) {
-      return NextResponse.json({ error: "Thiếu thông tin giữ chỗ" }, { status: 400 });
+    const body = await req.json();
+    const parsed = createReservationSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues.map((i) => i.message).join(", ") },
+        { status: 400 }
+      );
+    }
+
+    const { listingId, deliveryMethod, preferredSchedule } = parsed.data;
+
+    // 1. Kiểm tra tin đăng tồn tại và còn active
+    const listingDoc = await adminDb.collection("listings").doc(listingId).get();
+    if (!listingDoc.exists) {
+      return NextResponse.json({ error: "Tin đăng không tồn tại" }, { status: 404 });
+    }
+
+    const listingData = listingDoc.data() || {};
+    const sellerId = listingData.sellerId;
+
+    if (listingData.status !== "active") {
+      return NextResponse.json(
+        { error: "Món đồ này hiện không mở để giữ chỗ hoặc đã có giao dịch hoàn tất." },
+        { status: 400 }
+      );
     }
 
     if (buyerId === sellerId) {
@@ -25,7 +51,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Kiểm tra xem người mua đã có yêu cầu pending trên tin này chưa
+    // 2. Kiểm tra xem người mua đã có yêu cầu pending trên tin này chưa
     const existingSnap = await adminDb
       .collection("reservations")
       .where("listingId", "==", listingId)
@@ -43,7 +69,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Kiểm tra số lượng yêu cầu pending hiện tại trên tin (tối đa 3 để tránh khóa ảo)
+    // 3. Kiểm tra số lượng yêu cầu pending hiện tại trên tin (tối đa 3 để tránh khóa ảo)
     const currentPendingSnap = await adminDb
       .collection("reservations")
       .where("listingId", "==", listingId)
@@ -60,7 +86,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Thời hạn 24 giờ tính theo múi giờ Việt Nam
+    // 4. Thời hạn 24 giờ
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
@@ -68,23 +94,26 @@ export async function POST(req: NextRequest) {
     await reservationRef.set({
       id: reservationRef.id,
       listingId,
+      listingTitle: listingData.title || "Món đồ pass",
+      listingPrice: listingData.price || 0,
+      listingImage: listingData.coverImage || "",
       buyerId,
-      buyerName: buyerName || "Sinh viên",
+      buyerName,
       sellerId,
       deliveryMethod: deliveryMethod || "pickup",
       preferredSchedule: preferredSchedule || "Thỏa thuận",
-      status: "pending", // "pending" | "confirmed" | "waitlisted" | "completed" | "cancelled" | "expired" | "rejected" | "no_show"
+      status: "pending",
       expiresAt,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    // 4. Tạo thông báo trong app cho người bán
+    // 5. Tạo thông báo trong app cho người bán
     await adminDb.collection("notifications").add({
       userId: sellerId,
       type: "reservation_request",
       title: "Có sinh viên vừa gửi yêu cầu Giữ Chỗ! ⚡",
-      message: `${buyerName || "Một bạn sinh viên"} muốn giữ chỗ món đồ của bạn. Bạn có 24 giờ để bấm Xác nhận hoặc Từ chối.`,
+      message: `${buyerName} muốn giữ chỗ món đồ '${listingData.title}'. Bạn có 24 giờ để bấm Xác nhận hoặc Từ chối.`,
       targetId: reservationRef.id,
       read: false,
       createdAt: FieldValue.serverTimestamp(),
@@ -96,7 +125,6 @@ export async function POST(req: NextRequest) {
       message: "Yêu cầu giữ chỗ đã được gửi thành công đến người bán.",
     });
   } catch (err) {
-    console.error("Lỗi tạo yêu cầu giữ chỗ:", err);
-    return NextResponse.json({ error: "Lỗi nội bộ máy chủ" }, { status: 500 });
+    return errorResponse(err);
   }
 }

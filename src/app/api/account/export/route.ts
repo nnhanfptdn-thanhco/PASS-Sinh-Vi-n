@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser, errorResponse } from "@/lib/auth/server";
 import { adminDb } from "@/lib/firebase/admin";
 
 export const dynamic = "force-dynamic";
@@ -6,12 +7,8 @@ export const dynamic = "force-dynamic";
 // Tải về toàn bộ dữ liệu cá nhân (Quyền của chủ thể dữ liệu theo Luật BV Dữ liệu cá nhân 2025)
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
-      return NextResponse.json({ error: "Thiếu userId" }, { status: 400 });
-    }
+    const token = await requireUser(req);
+    const userId = token.uid;
 
     const [userDoc, userPrivateDoc, verifDoc, listingsSnap, reservationsSnap] =
       await Promise.all([
@@ -22,11 +19,17 @@ export async function GET(req: NextRequest) {
         adminDb.collection("reservations").where("buyerId", "==", userId).get(),
       ]);
 
+    const rawVerif = verifDoc.data() || {};
+    // Loại bỏ ảnh thẻ và đường dẫn file nhạy cảm khỏi tệp xuất
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { cardImagePreviewUrl, cardStoragePath, cardImagePath, ...safeVerif } = rawVerif;
+
     const exportData = {
       exportDate: new Date().toISOString(),
+      userId,
       publicProfile: userDoc.data() || null,
       privateProfile: userPrivateDoc.data() || null,
-      verificationRecord: verifDoc.data() || null,
+      verificationRecord: verifDoc.exists ? safeVerif : null,
       myListings: listingsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
       myReservations: reservationsSnap.docs.map((d) => ({
         id: d.id,
@@ -43,7 +46,6 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (err) {
-    console.error("Lỗi xuất dữ liệu:", err);
-    return NextResponse.json({ error: "Lỗi nội bộ máy chủ" }, { status: 500 });
+    return errorResponse(err);
   }
 }

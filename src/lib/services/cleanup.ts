@@ -30,13 +30,15 @@ export async function runScheduledCleanup(): Promise<CleanupResult> {
 
   for (const doc of oldVerifsSnap.docs) {
     const data = doc.data();
-    if (data.cardImagePath || data.cardImagePreviewUrl) {
+    const storagePath = data.cardStoragePath || data.cardImagePath;
+    if (storagePath || data.cardImagePreviewUrl) {
       try {
-        if (data.cardImagePath) {
-          const fileRef = adminStorage.bucket().file(data.cardImagePath);
+        if (storagePath) {
+          const fileRef = adminStorage.bucket().file(storagePath);
           await fileRef.delete({ ignoreNotFound: true });
         }
         await doc.ref.update({
+          cardStoragePath: null,
           cardImagePath: null,
           cardImagePreviewUrl: null,
           cardAutoDeletedAt: FieldValue.serverTimestamp(),

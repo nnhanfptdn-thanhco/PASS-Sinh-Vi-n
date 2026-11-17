@@ -1,30 +1,69 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireVerified, errorResponse } from "@/lib/auth/server";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import { z } from "zod";
 
-// Giới hạn xem liên hệ: tối đa 10 lượt mỗi giờ cho mỗi sinh viên để chống cào số điện thoại hàng loạt
 const MAX_CONTACT_VIEWS_PER_HOUR = 10;
+
+const contactRequestSchema = z.object({
+  listingId: z.string().min(1, "Thiếu listingId"),
+});
 
 export async function POST(req: NextRequest) {
   try {
-    const { buyerId, listingId, sellerId } = await req.json();
+    const token = await requireVerified(req);
+    const buyerId = token.uid;
 
-    if (!buyerId || !listingId || !sellerId) {
-      return NextResponse.json({ error: "Thiếu thông tin yêu cầu" }, { status: 400 });
+    const body = await req.json();
+    const parsed = contactRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues.map((i) => i.message).join(", ") },
+        { status: 400 }
+      );
     }
 
-    // 1. Kiểm tra quyền của người mua (Phải là sinh viên đã xác minh)
-    const buyerDoc = await adminDb.collection("users").doc(buyerId).get();
-    if (!buyerDoc.exists || !buyerDoc.data()?.verified) {
+    const { listingId } = parsed.data;
+
+    // 1. Đối chiếu trạng thái xác minh từ verifications/{uid}
+    const verifDoc = await adminDb.collection("verifications").doc(buyerId).get();
+    if (!verifDoc.exists || verifDoc.data()?.status !== "approved") {
       return NextResponse.json(
         {
           error:
-            "Chỉ sinh viên đã xác minh thẻ mới được xem thông tin liên hệ của người bán.",
+            "Chỉ sinh viên đã được phê duyệt thẻ mới được xem thông tin liên hệ của người bán.",
         },
         { status: 403 }
       );
     }
 
-    // 2. Kiểm tra giới hạn tần suất xem số (Rate Limiting trong 1 giờ)
+    // 2. Kiểm tra tin đăng tồn tại và đang hoạt động
+    const listingDoc = await adminDb.collection("listings").doc(listingId).get();
+    if (!listingDoc.exists) {
+      return NextResponse.json(
+        { error: "Không tìm thấy tin đăng này trên hệ thống." },
+        { status: 404 }
+      );
+    }
+
+    const listingData = listingDoc.data() || {};
+    const sellerId = listingData.sellerId;
+
+    if (listingData.status !== "active") {
+      return NextResponse.json(
+        { error: "Tin đăng này đã ẩn hoặc đã hoàn tất giao dịch." },
+        { status: 400 }
+      );
+    }
+
+    if (sellerId === buyerId) {
+      return NextResponse.json(
+        { error: "Bạn là người bán của tin đăng này." },
+        { status: 400 }
+      );
+    }
+
+    // 3. Kiểm tra giới hạn tần suất xem số (Rate Limiting trong 1 giờ)
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     const recentViewsSnap = await adminDb
       .collection("contactViewLogs")
@@ -42,7 +81,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Lấy thông tin liên hệ từ usersPrivate của người bán
+    // 4. Lấy thông tin liên hệ từ usersPrivate của người bán
     const sellerPrivateDoc = await adminDb.collection("usersPrivate").doc(sellerId).get();
     if (!sellerPrivateDoc.exists) {
       return NextResponse.json(
@@ -53,7 +92,7 @@ export async function POST(req: NextRequest) {
 
     const sellerPrivate = sellerPrivateDoc.data();
 
-    // 4. Ghi log lịch sử xem liên hệ
+    // 5. Ghi log lịch sử xem liên hệ
     await adminDb.collection("contactViewLogs").add({
       buyerId,
       sellerId,
@@ -70,7 +109,6 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
-    console.error("Lỗi lấy thông tin liên hệ:", err);
-    return NextResponse.json({ error: "Lỗi nội bộ máy chủ" }, { status: 500 });
+    return errorResponse(err);
   }
 }

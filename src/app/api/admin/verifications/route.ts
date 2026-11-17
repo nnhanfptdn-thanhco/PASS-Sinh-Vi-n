@@ -1,44 +1,93 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth, adminDb, FieldValue } from "@/lib/firebase/admin";
+import { requireAdmin, errorResponse } from "@/lib/auth/server";
+import { adminAuth, adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
+import { z } from "zod";
 
-// GET: Lấy danh sách hồ sơ xác minh cần duyệt
-export async function GET() {
+const actionSchema = z.object({
+  userId: z.string().min(1, "Thiếu userId"),
+  action: z.enum(["approve", "reject"]),
+  reason: z.string().optional(),
+  note: z.string().optional(),
+});
+
+// GET: Lấy danh sách hồ sơ xác minh cần duyệt (Chỉ Admin)
+export async function GET(req: NextRequest) {
   try {
+    await requireAdmin(req);
+
     const snap = await adminDb
       .collection("verifications")
       .orderBy("createdAt", "desc")
       .limit(50)
       .get();
 
-    const items = snap.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const bucket = adminStorage.bucket();
+
+    const items = await Promise.all(
+      snap.docs.map(async (doc) => {
+        const data = doc.data();
+        let signedCardUrl: string | null = null;
+
+        // Sinh Signed URL 5 phút nếu có ảnh thẻ trên Storage
+        const storagePath =
+          (data.cardStoragePath as string) || `private/cards/${doc.id}/front.webp`;
+
+        try {
+          const file = bucket.file(storagePath);
+          const [exists] = await file.exists();
+          if (exists) {
+            const [url] = await file.getSignedUrl({
+              action: "read",
+              expires: Date.now() + 5 * 60 * 1000, // 5 phút
+            });
+            signedCardUrl = url;
+          }
+        } catch {
+          // Bỏ qua lỗi sinh signed url nếu file không tồn tại
+        }
+
+        // Bỏ cardImagePreviewUrl dạng base64 thô khỏi phản hồi API
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { cardImagePreviewUrl, ...safeData } = data;
+
+        return {
+          id: doc.id,
+          userId: doc.id,
+          ...safeData,
+          cardImagePreviewUrl: signedCardUrl || null,
+        };
+      })
+    );
 
     // Ưu tiên xếp email trường (.edu.vn) lên đầu hàng đợi
-    items.sort((a, b) => {
-      // @ts-expect-error dynamic field
-      if (a.isEduEmail && !b.isEduEmail) return -1;
-      // @ts-expect-error dynamic field
-      if (!a.isEduEmail && b.isEduEmail) return 1;
+    items.sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
+      if (Boolean(a.isEduEmail) && !b.isEduEmail) return -1;
+      if (!a.isEduEmail && Boolean(b.isEduEmail)) return 1;
       return 0;
     });
 
     return NextResponse.json({ items });
   } catch (err) {
-    console.error("Lỗi lấy danh sách duyệt:", err);
-    return NextResponse.json({ error: "Không thể lấy danh sách" }, { status: 500 });
+    return errorResponse(err);
   }
 }
 
-// POST: Xử lý Duyệt hoặc Từ chối thẻ sinh viên
+// POST: Xử lý Duyệt hoặc Từ chối thẻ sinh viên (Chỉ Admin)
 export async function POST(req: NextRequest) {
   try {
-    const { userId, action, reason, note, adminEmail } = await req.json();
+    const adminToken = await requireAdmin(req);
+    const body = await req.json();
+    const parsed = actionSchema.safeParse(body);
 
-    if (!userId || !["approve", "reject"].includes(action)) {
-      return NextResponse.json({ error: "Tham số không hợp lệ" }, { status: 400 });
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues.map((i) => i.message).join(", ") },
+        { status: 400 }
+      );
     }
+
+    const { userId, action, reason, note } = parsed.data;
+    const adminEmail = adminToken.email || "admin";
 
     if (action === "reject" && !reason) {
       return NextResponse.json(
@@ -50,23 +99,32 @@ export async function POST(req: NextRequest) {
     const verificationRef = adminDb.collection("verifications").doc(userId);
     const userRef = adminDb.collection("users").doc(userId);
 
+    const verifSnap = await verificationRef.get();
+    if (!verifSnap.exists) {
+      return NextResponse.json(
+        { error: "Không tìm thấy hồ sơ xác minh của sinh viên này" },
+        { status: 404 }
+      );
+    }
+
     if (action === "approve") {
-      // 1. Cấp Custom Claims: verified = true
-      try {
-        await adminAuth.setCustomUserClaims(userId, {
-          verified: true,
-          role: "verified",
-        });
-      } catch (authErr) {
-        console.warn("Lỗi gán claim auth:", authErr);
-      }
+      // 1. Cấp Custom Claims: verified = true (Gộp claims, tuyệt đối không ghi đè mất claim admin)
+      const userRecord = await adminAuth.getUser(userId);
+      const existingClaims = userRecord.customClaims || {};
+
+      await adminAuth.setCustomUserClaims(userId, {
+        ...existingClaims,
+        verified: true,
+        role: existingClaims.admin ? "admin" : "verified",
+      });
 
       // 2. Cập nhật hồ sơ
       await verificationRef.update({
         status: "approved",
         approvedAt: FieldValue.serverTimestamp(),
-        approvedBy: adminEmail || "admin",
+        approvedBy: adminEmail,
         rejectReason: null,
+        rejectNote: null,
       });
 
       await userRef.update({
@@ -86,8 +144,9 @@ export async function POST(req: NextRequest) {
 
       // 4. Ghi nhật ký quản trị
       await adminDb.collection("adminLogs").add({
-        adminEmail: adminEmail || "admin",
-        action: "approve_student_card",
+        adminEmail,
+        adminUid: adminToken.uid,
+        action: "APPROVE_STUDENT_CARD",
         targetUserId: userId,
         timestamp: FieldValue.serverTimestamp(),
       });
@@ -101,43 +160,54 @@ export async function POST(req: NextRequest) {
       await verificationRef.update({
         status: "rejected",
         rejectedAt: FieldValue.serverTimestamp(),
-        rejectedBy: adminEmail || "admin",
+        rejectedBy: adminEmail,
         rejectReason: reason,
-        rejectNote: note || "",
+        rejectNote: note || null,
       });
+
+      // Thu hồi quyền verified nếu trước đó từng có
+      const userRecord = await adminAuth.getUser(userId);
+      const existingClaims = userRecord.customClaims || {};
+      if (existingClaims.verified) {
+        await adminAuth.setCustomUserClaims(userId, {
+          ...existingClaims,
+          verified: false,
+          role: existingClaims.admin ? "admin" : "pending",
+        });
+      }
 
       await userRef.update({
         verified: false,
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // Tạo thông báo trong app kèm lý do
+      // Tạo thông báo trong app
       await adminDb.collection("notifications").add({
         userId,
         type: "verification_result",
-        title: "Hồ sơ xác minh thẻ chưa được duyệt",
-        message: `Lý do: ${reason}. ${note ? `Ghi chú: ${note}` : ""}. Bạn có thể kiểm tra và nộp lại ảnh thẻ rõ nét hơn.`,
+        title: "Hồ sơ thẻ sinh viên cần bổ sung / bị từ chối ⚠️",
+        message: `Lý do: ${reason}. ${note ? `Ghi chú: ${note}` : ""}. Vui lòng chụp lại ảnh thẻ rõ nét và gửi lại.`,
         read: false,
         createdAt: FieldValue.serverTimestamp(),
       });
 
       // Ghi nhật ký quản trị
       await adminDb.collection("adminLogs").add({
-        adminEmail: adminEmail || "admin",
-        action: "reject_student_card",
+        adminEmail,
+        adminUid: adminToken.uid,
+        action: "REJECT_STUDENT_CARD",
         targetUserId: userId,
         reason,
-        note: note || "",
+        note: note || null,
         timestamp: FieldValue.serverTimestamp(),
       });
 
       return NextResponse.json({
         success: true,
-        message: "Đã từ chối hồ sơ xác minh kèm lý do.",
+        message: "Đã từ chối hồ sơ thẻ sinh viên.",
       });
     }
   } catch (err) {
-    console.error("Lỗi xử lý duyệt thẻ:", err);
-    return NextResponse.json({ error: "Lỗi nội bộ máy chủ" }, { status: 500 });
+    return errorResponse(err);
   }
 }

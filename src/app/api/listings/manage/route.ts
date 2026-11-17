@@ -1,13 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireVerified, errorResponse } from "@/lib/auth/server";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import { z } from "zod";
+
+const manageListingSchema = z.object({
+  listingId: z.string().min(1, "Thiếu listingId"),
+  action: z.enum(["change_status", "renew"]),
+  newStatus: z.enum(["active", "hidden_by_seller", "sold"]).optional(),
+});
 
 export async function POST(req: NextRequest) {
   try {
-    const { listingId, sellerId, action, newStatus } = await req.json();
+    const token = await requireVerified(req);
+    const sellerId = token.uid;
 
-    if (!listingId || !sellerId || !action) {
-      return NextResponse.json({ error: "Thiếu thông tin yêu cầu" }, { status: 400 });
+    const body = await req.json();
+    const parsed = manageListingSchema.safeParse(body);
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues.map((i) => i.message).join(", ") },
+        { status: 400 }
+      );
     }
+
+    const { listingId, action, newStatus } = parsed.data;
 
     const listingRef = adminDb.collection("listings").doc(listingId);
     const snap = await listingRef.get();
@@ -17,7 +34,7 @@ export async function POST(req: NextRequest) {
     }
 
     const data = snap.data();
-    if (data?.sellerId !== sellerId) {
+    if (data?.sellerId !== sellerId && token.admin !== true) {
       return NextResponse.json(
         { error: "Bạn không có quyền chỉnh sửa tin đăng này" },
         { status: 403 }
@@ -25,7 +42,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Không cho phép người bán tự mở lại tin nếu bị Admin ẩn do vi phạm
-    if (data?.status === "hidden_by_admin" && action === "change_status") {
+    if (data?.status === "hidden_by_admin") {
       return NextResponse.json(
         {
           error:
@@ -36,6 +53,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "change_status") {
+      if (!newStatus) {
+        return NextResponse.json(
+          { error: "Vui lòng chọn trạng thái mới hợp lệ" },
+          { status: 400 }
+        );
+      }
+
       await listingRef.update({
         status: newStatus,
         updatedAt: FieldValue.serverTimestamp(),
@@ -63,7 +87,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: "Hành động không hợp lệ" }, { status: 400 });
   } catch (err) {
-    console.error("Lỗi quản lý tin:", err);
-    return NextResponse.json({ error: "Lỗi nội bộ máy chủ" }, { status: 500 });
+    return errorResponse(err);
   }
 }

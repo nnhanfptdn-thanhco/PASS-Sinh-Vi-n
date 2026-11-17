@@ -1,13 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser, errorResponse } from "@/lib/auth/server";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import { z } from "zod";
+
+const reservationActionSchema = z.object({
+  reservationId: z.string().min(1, "Thiếu reservationId"),
+  action: z.enum(["confirm", "reject", "cancel", "complete"]),
+  reason: z.string().optional(),
+});
 
 export async function POST(req: NextRequest) {
   try {
-    const { reservationId, userId, action, reason } = await req.json();
+    const token = await requireUser(req);
+    const userId = token.uid;
 
-    if (!reservationId || !userId || !action) {
-      return NextResponse.json({ error: "Thiếu thông tin thao tác" }, { status: 400 });
+    const body = await req.json();
+    const parsed = reservationActionSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues.map((i) => i.message).join(", ") },
+        { status: 400 }
+      );
     }
+
+    const { reservationId, action, reason } = parsed.data;
 
     const resRef = adminDb.collection("reservations").doc(reservationId);
     const snap = await resRef.get();
@@ -20,8 +36,11 @@ export async function POST(req: NextRequest) {
     const isSeller = resData?.sellerId === userId;
     const isBuyer = resData?.buyerId === userId;
 
-    if (!isSeller && !isBuyer) {
-      return NextResponse.json({ error: "Bạn không có quyền thực hiện thao tác này" }, { status: 403 });
+    if (!isSeller && !isBuyer && token.admin !== true) {
+      return NextResponse.json(
+        { error: "Bạn không có quyền thực hiện thao tác trên yêu cầu giữ chỗ này" },
+        { status: 403 }
+      );
     }
 
     const listingId = resData?.listingId;
@@ -29,14 +48,21 @@ export async function POST(req: NextRequest) {
     const listingPrivateRef = adminDb.collection("listingsPrivate").doc(listingId);
 
     // 1. NGƯỜI BÁN XÁC NHẬN GIỮ CHỖ (CONFIRM)
-    if (action === "confirm" && isSeller) {
+    if (action === "confirm") {
+      if (!isSeller && token.admin !== true) {
+        return NextResponse.json(
+          { error: "Chỉ người bán mới có quyền xác nhận giữ chỗ" },
+          { status: 403 }
+        );
+      }
+
       await resRef.update({
         status: "confirmed",
         confirmedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // Cập nhật tin sang "reserved" (Đã có người giữ)
+      // Cập nhật tin sang "reserved"
       await listingRef.update({
         status: "reserved",
         updatedAt: FieldValue.serverTimestamp(),
@@ -104,7 +130,7 @@ export async function POST(req: NextRequest) {
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // Chuyển yêu cầu sớm nhất trong hàng chờ dự phòng (waitlisted) lên pending theo SPEC
+      // Chuyển yêu cầu sớm nhất trong hàng chờ dự phòng (waitlisted) lên pending
       const waitlistedSnap = await adminDb
         .collection("reservations")
         .where("listingId", "==", listingId)
@@ -139,7 +165,14 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. HOÀN TẤT GIAO DỊCH (COMPLETED - ĐÃ BÁN THÀNH CÔNG)
-    if (action === "complete" && isSeller) {
+    if (action === "complete") {
+      if (!isSeller && token.admin !== true) {
+        return NextResponse.json(
+          { error: "Chỉ người bán mới có quyền hoàn tất giao dịch bán đồ" },
+          { status: 403 }
+        );
+      }
+
       await resRef.update({
         status: "completed",
         completedAt: FieldValue.serverTimestamp(),
@@ -180,7 +213,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: "Hành động không hợp lệ" }, { status: 400 });
   } catch (err) {
-    console.error("Lỗi xử lý yêu cầu giữ chỗ:", err);
-    return NextResponse.json({ error: "Lỗi nội bộ máy chủ" }, { status: 500 });
+    return errorResponse(err);
   }
 }

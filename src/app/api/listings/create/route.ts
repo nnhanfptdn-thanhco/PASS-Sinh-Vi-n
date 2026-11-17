@@ -1,91 +1,78 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireVerified, errorResponse } from "@/lib/auth/server";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
 import { removeVietnameseTones } from "@/lib/utils";
+import { z } from "zod";
 
-// Hằng số cấu hình theo SPEC
 const MAX_ACTIVE_LISTINGS_PER_SELLER = 10;
 const MAX_PRICE_VND = 500_000_000;
 
+const createListingSchema = z.object({
+  title: z
+    .string()
+    .min(10, "Tên món đồ phải từ 10 đến 80 ký tự")
+    .max(80, "Tên món đồ phải từ 10 đến 80 ký tự")
+    .refine((val) => val !== val.toUpperCase() || val.length <= 15, {
+      message: "Tên món đồ không được viết hoa toàn bộ",
+    })
+    .refine(
+      (val) => !/(0[3|5|7|8|9]\d{8})|(https?:\/\/)|(www\.)/i.test(val),
+      {
+        message: "Tên món đồ không được chứa số điện thoại hoặc liên kết web",
+      }
+    ),
+  categoryId: z.string().min(1, "Vui lòng chọn danh mục"),
+  subcategory: z.string().optional(),
+  condition: z.string().min(1, "Vui lòng chọn tình trạng món đồ"),
+  brandModel: z.string().optional(),
+  usageTime: z.string().optional(),
+  defects: z.string().optional(),
+  noDefects: z.boolean().optional(),
+  description: z.string().optional(),
+  price: z
+    .number()
+    .min(0, "Giá pass không được âm")
+    .max(MAX_PRICE_VND, `Giá pass tối đa ${MAX_PRICE_VND.toLocaleString()} đ`),
+  originalPrice: z.number().optional(),
+  negotiationType: z.enum(["fixed", "slight", "flexible"]).optional(),
+  isCombo: z.boolean().optional(),
+  urgentPass: z.boolean().optional(),
+  passDeadline: z.string().optional(),
+  schoolCode: z.string().min(1, "Vui lòng chọn mã trường học"),
+  campusId: z.string().optional(),
+  provinceCode: z.string().min(1, "Vui lòng chọn tỉnh/thành"),
+  wardCode: z.string().optional(),
+  publicMeetingPoint: z.string().optional(),
+  exactAddress: z.string().optional(),
+  detailedSchedule: z.string().optional(),
+  shippingMethods: z.record(z.string(), z.any()).optional(),
+  itemDimensions: z.string().optional(),
+  images: z
+    .array(z.string().min(1))
+    .min(1, "Tin đăng phải có tối thiểu 1 ảnh thực tế")
+    .max(10, "Tin đăng có tối đa 10 ảnh"),
+  motorbikeDetails: z.record(z.string(), z.any()).optional(),
+});
+
 export async function POST(req: NextRequest) {
   try {
+    const token = await requireVerified(req);
+    const sellerId = token.uid;
+    const sellerName = token.name || "Sinh viên";
+
     const body = await req.json();
-    const {
-      sellerId,
-      sellerName,
-      title,
-      categoryId,
-      subcategory,
-      condition,
-      brandModel,
-      usageTime,
-      defects,
-      noDefects,
-      description,
-      price,
-      originalPrice,
-      negotiationType,
-      isCombo,
-      urgentPass,
-      passDeadline,
-      schoolCode,
-      campusId,
-      provinceCode,
-      wardCode,
-      publicMeetingPoint,
-      exactAddress,
-      detailedSchedule,
-      shippingMethods,
-      itemDimensions,
-      images,
-      motorbikeDetails,
-    } = body;
+    const parsed = createListingSchema.safeParse(body);
 
-    // 1. Kiểm tra tham số cơ bản
-    if (!sellerId || !title || !categoryId || price === undefined) {
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "Vui lòng nhập đầy đủ các trường thông tin bắt buộc" },
+        { error: parsed.error.issues.map((i) => i.message).join(", ") },
         { status: 400 }
       );
     }
 
-    if (title.length < 10 || title.length > 80) {
-      return NextResponse.json(
-        { error: "Tên món đồ phải từ 10 đến 80 ký tự" },
-        { status: 400 }
-      );
-    }
+    const data = parsed.data;
 
-    // Không cho phép viết hoa toàn bộ
-    if (title === title.toUpperCase() && title.length > 15) {
-      return NextResponse.json(
-        { error: "Tên món đồ không được viết hoa toàn bộ" },
-        { status: 400 }
-      );
-    }
-
-    // Chặn số điện thoại hoặc link web trong tên món
-    if (/(0[3|5|7|8|9]\d{8})|(https?:\/\/)|(www\.)/i.test(title)) {
-      return NextResponse.json(
-        { error: "Tên món đồ không được chứa số điện thoại hoặc liên kết web" },
-        { status: 400 }
-      );
-    }
-
-    if (price < 0 || price > MAX_PRICE_VND) {
-      return NextResponse.json(
-        { error: `Giá pass phải từ 0 đến ${MAX_PRICE_VND.toLocaleString()} đ` },
-        { status: 400 }
-      );
-    }
-
-    if (!images || images.length < 3) {
-      return NextResponse.json(
-        { error: "Tin đăng phải có tối thiểu 3 ảnh thực tế của món đồ" },
-        { status: 400 }
-      );
-    }
-
-    // 2. Kiểm tra giới hạn 10 tin đang bán của tài khoản
+    // 1. Kiểm tra giới hạn 10 tin đang bán của tài khoản
     const activeListingsSnap = await adminDb
       .collection("listings")
       .where("sellerId", "==", sellerId)
@@ -101,8 +88,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Chống đăng trùng: kiểm tra độ tương đồng tên tin của cùng người bán
-    const normalizedNewTitle = removeVietnameseTones(title);
+    // 2. Chống đăng trùng: kiểm tra độ tương đồng tên tin của cùng người bán
+    const normalizedNewTitle = removeVietnameseTones(data.title);
     for (const doc of activeListingsSnap.docs) {
       const existingTitle = removeVietnameseTones(doc.data().title || "");
       if (
@@ -119,7 +106,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. Tạo mảng từ khóa tìm kiếm tiếng Việt không dấu (searchTokens)
+    // 3. Tạo searchTokens
     const tokensSet = new Set<string>();
     const words = normalizedNewTitle.split(/\s+/).filter(Boolean);
     for (const w of words) {
@@ -127,44 +114,46 @@ export async function POST(req: NextRequest) {
     }
     const searchTokens = Array.from(tokensSet);
 
-    // 5. Tạo mã tin đăng
+    // 4. Tạo mã tin đăng
     const listingRef = adminDb.collection("listings").doc();
     const listingId = listingRef.id;
 
-    // 6. Lưu dữ liệu công khai vào collection listings
+    // 5. Lưu dữ liệu công khai vào collection listings
     await listingRef.set({
       id: listingId,
       sellerId,
-      sellerName: sellerName || "Sinh viên",
-      title: title.trim(),
+      sellerName,
+      title: data.title.trim(),
       titleNormalized: normalizedNewTitle,
       searchTokens,
-      categoryId,
-      subcategory: subcategory || null,
-      condition,
-      brandModel: brandModel || null,
-      usageTime: usageTime || null,
-      defects: noDefects ? "Không có lỗi" : defects || "Không có lỗi",
-      description: description || "",
-      price: Math.round(price / 1000) * 1000, // Làm tròn theo 1.000 đ
-      originalPrice: originalPrice ? Math.round(originalPrice / 1000) * 1000 : null,
-      negotiationType: negotiationType || "flexible", // "fixed" | "slight" | "flexible"
-      isCombo: Boolean(isCombo),
-      urgentPass: Boolean(urgentPass),
-      passDeadline: passDeadline || null,
-      schoolCode: schoolCode || "QSX",
-      campusId: campusId || "c1",
-      provinceCode: provinceCode || "79",
-      wardCode: wardCode || "27139",
-      publicMeetingPoint: publicMeetingPoint || "Cổng chính khuôn viên trường",
-      shippingMethods: shippingMethods || { pickup: true },
-      hasShipping: Boolean(shippingMethods?.sellerDelivery || shippingMethods?.carrierShipping),
-      campusDelivery: Boolean(shippingMethods?.campusDelivery),
-      itemDimensions: itemDimensions || null,
-      images,
-      coverImage: images[0] || "",
-      motorbikeDetails: motorbikeDetails || null,
-      status: "active", // "draft" | "active" | "reserved" | "sold" | "expired" | "hidden_by_seller" | "hidden_by_admin"
+      categoryId: data.categoryId,
+      subcategory: data.subcategory || null,
+      condition: data.condition,
+      brandModel: data.brandModel || null,
+      usageTime: data.usageTime || null,
+      defects: data.noDefects ? "Không có lỗi" : data.defects || "Không có lỗi",
+      description: data.description || "",
+      price: Math.round(data.price / 1000) * 1000,
+      originalPrice: data.originalPrice ? Math.round(data.originalPrice / 1000) * 1000 : null,
+      negotiationType: data.negotiationType || "flexible",
+      isCombo: Boolean(data.isCombo),
+      urgentPass: Boolean(data.urgentPass),
+      passDeadline: data.passDeadline || null,
+      schoolCode: data.schoolCode,
+      campusId: data.campusId || null,
+      provinceCode: data.provinceCode,
+      wardCode: data.wardCode || null,
+      publicMeetingPoint: data.publicMeetingPoint || "Cổng chính khuôn viên trường",
+      shippingMethods: data.shippingMethods || { pickup: true },
+      hasShipping: Boolean(
+        data.shippingMethods?.sellerDelivery || data.shippingMethods?.carrierShipping
+      ),
+      campusDelivery: Boolean(data.shippingMethods?.campusDelivery),
+      itemDimensions: data.itemDimensions || null,
+      images: data.images,
+      coverImage: data.images[0] || "",
+      motorbikeDetails: data.motorbikeDetails || null,
+      status: "active",
       viewsCount: 0,
       favoritesCount: 0,
       chatsCount: 0,
@@ -172,18 +161,17 @@ export async function POST(req: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    // 7. Lưu dữ liệu bảo mật (Địa chỉ chính xác, SĐT) vào collection listingsPrivate
-    // Chỉ người bán và người mua đã chốt confirmed mới được đọc
+    // 6. Lưu dữ liệu bảo mật vào collection listingsPrivate
     await adminDb.collection("listingsPrivate").doc(listingId).set({
       listingId,
       sellerId,
-      exactAddress: exactAddress || null,
-      detailedSchedule: detailedSchedule || null,
+      exactAddress: data.exactAddress || null,
+      detailedSchedule: data.detailedSchedule || null,
       confirmedBuyerId: null,
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    // 8. Tăng bộ đếm activeListingsCount của user
+    // 7. Tăng bộ đếm activeListingsCount của user
     await adminDb
       .collection("users")
       .doc(sellerId)
@@ -201,10 +189,6 @@ export async function POST(req: NextRequest) {
       message: "Đăng tin thành công! Tin của bạn đã xuất hiện trên chợ sinh viên.",
     });
   } catch (err) {
-    console.error("Lỗi đăng tin:", err);
-    return NextResponse.json(
-      { error: "Đã xảy ra lỗi nội bộ máy chủ khi tạo tin" },
-      { status: 500 }
-    );
+    return errorResponse(err);
   }
 }

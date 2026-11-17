@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { requireUser, errorResponse, HttpError } from "@/lib/auth/server";
+import { adminAuth, adminDb, adminStorage } from "@/lib/firebase/admin";
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId } = await req.json();
+    const token = await requireUser(req);
+    const userId = token.uid;
 
-    if (!userId) {
-      return NextResponse.json({ error: "Thiếu userId" }, { status: 400 });
+    // Yêu cầu auth_time gần đây (trong vòng 5 phút = 300 giây) để chống tấn công CSRF / phiên bị chiếm đoạt
+    const authTime = token.auth_time || 0;
+    const nowInSeconds = Math.floor(Date.now() / 1000);
+    if (nowInSeconds - authTime > 300) {
+      throw new HttpError(
+        403,
+        "Vì lý do an toàn, vui lòng đăng nhập lại Google trước khi thực hiện xóa vĩnh viễn tài khoản."
+      );
     }
 
     // 1. Kiểm tra xem người dùng còn giao dịch confirmed nào chưa hoàn tất không
@@ -41,16 +49,22 @@ export async function POST(req: NextRequest) {
       batch.delete(adminDb.collection("listingsPrivate").doc(doc.id));
     }
 
-    // 3. Xóa hồ sơ công khai và riêng tư
+    // 3. Xóa hồ sơ công khai, riêng tư, và thông báo
     batch.delete(adminDb.collection("users").doc(userId));
     batch.delete(adminDb.collection("usersPrivate").doc(userId));
-
-    // 4. Xóa bản ghi xác minh và studentIdHash (theo đúng SPEC để sinh viên có thể đăng ký lại sau này nếu muốn)
     batch.delete(adminDb.collection("verifications").doc(userId));
+
+    const notifSnap = await adminDb
+      .collection("notifications")
+      .where("userId", "==", userId)
+      .get();
+    for (const doc of notifSnap.docs) {
+      batch.delete(doc.ref);
+    }
 
     await batch.commit();
 
-    // 5. Ẩn danh hóa các đánh giá đã gửi
+    // 4. Ẩn danh hóa các đánh giá đã gửi
     const reviewsSnap = await adminDb
       .collection("reviews")
       .where("reviewerId", "==", userId)
@@ -63,6 +77,15 @@ export async function POST(req: NextRequest) {
       });
     }
     await reviewBatch.commit();
+
+    // 5. Xóa tệp Cloud Storage của user (ảnh thẻ, avatar)
+    try {
+      const bucket = adminStorage.bucket();
+      await bucket.deleteFiles({ prefix: `private/cards/${userId}/`, force: true });
+      await bucket.deleteFiles({ prefix: `public/avatars/${userId}/`, force: true });
+    } catch {
+      // Tiếp tục nếu thư mục storage trống
+    }
 
     // 6. Xóa người dùng trong Firebase Auth
     try {
@@ -77,7 +100,6 @@ export async function POST(req: NextRequest) {
         "Tài khoản và toàn bộ dữ liệu cá nhân của bạn đã được xóa hoàn toàn khỏi hệ thống.",
     });
   } catch (err) {
-    console.error("Lỗi xóa tài khoản:", err);
-    return NextResponse.json({ error: "Lỗi nội bộ máy chủ khi xóa tài khoản" }, { status: 500 });
+    return errorResponse(err);
   }
 }
