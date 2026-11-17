@@ -47,8 +47,8 @@ function initAdminApp() {
     );
   }
 
-  // Khi kết nối Emulator trong môi trường dev/test, chỉ cần projectId
-  if (isEmulator && !isProduction) {
+  // Khi kết nối Emulator, chỉ cần projectId
+  if (isEmulator) {
     return initializeApp({ projectId });
   }
 
@@ -59,7 +59,7 @@ function initAdminApp() {
         "[Bảo Mật Nghiêm Ngặt]: Môi trường Production bắt buộc phải cung cấp FIREBASE_CLIENT_EMAIL và FIREBASE_PRIVATE_KEY trong Environment Variables."
       );
     }
-    // Nếu ở môi trường local nhưng không bật emulator, vẫn cảnh báo nhưng cho phép ADC nếu có
+    // Nếu ở môi trường local nhưng không bật emulator, vẫn cho phép ADC nếu có
     return initializeApp({ projectId });
   }
 

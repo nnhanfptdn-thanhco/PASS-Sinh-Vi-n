@@ -45,20 +45,20 @@ export function getClientEnv(): ClientEnv {
     );
   }
 
-  // Chặn nghiêm ngặt: Tuyệt đối không cho phép apiKey demo khi ở production
-  if (isProduction && result.data.NEXT_PUBLIC_FIREBASE_API_KEY.includes("demo-api-key")) {
+  // Chặn nghiêm ngặt: Tuyệt đối không cho phép apiKey demo khi ở production thật (không bật emulator)
+  if (isProduction && !isEmulator && result.data.NEXT_PUBLIC_FIREBASE_API_KEY.includes("demo-api-key")) {
     throw new Error(
       "[Bảo Mật Nghiêm Ngặt]: Phát hiện biến NEXT_PUBLIC_FIREBASE_API_KEY chứa mã demo trong môi trường Production. Vui lòng cung cấp API Key Firebase hợp lệ từ Firebase Console."
     );
   }
 
-  // Chỉ cho phép key demo nếu chạy emulator trong môi trường phát triển / test
+  // Chỉ cho phép key demo nếu chạy emulator
   if (
     result.data.NEXT_PUBLIC_FIREBASE_API_KEY.includes("demo-api-key") &&
-    (!isEmulator || isProduction)
+    !isEmulator
   ) {
     throw new Error(
-      "[Lỗi Cấu Hình]: Khóa demo chỉ được phép sử dụng khi NEXT_PUBLIC_USE_FIREBASE_EMULATOR='true' trong môi trường Development."
+      "[Lỗi Cấu Hình]: Khóa demo chỉ được phép sử dụng khi NEXT_PUBLIC_USE_FIREBASE_EMULATOR='true'."
     );
   }
 
