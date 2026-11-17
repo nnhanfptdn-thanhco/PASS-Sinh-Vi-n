@@ -21,28 +21,19 @@ const clientEnvSchema = z.object({
 export type ClientEnv = z.infer<typeof clientEnvSchema>;
 
 export function getClientEnv(): ClientEnv {
-  // Tránh crash trong các build script trên CI (như Vercel) nếu build chưa được cấu hình biến môi trường
-  const isServerBuild = typeof window === "undefined";
-
   const rawEnv = {
     NEXT_PUBLIC_FIREBASE_API_KEY:
-      process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
-      (isServerBuild ? "build-placeholder-api-key" : ""),
+      process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyCCfwpvGzphQn1tTC7SOeYdHpsDYV0_tUg",
     NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:
-      process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
-      (isServerBuild ? "cho-pass-sv-build.firebaseapp.com" : ""),
+      process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "cho-pass-sv.firebaseapp.com",
     NEXT_PUBLIC_FIREBASE_PROJECT_ID:
-      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-      (isServerBuild ? "cho-pass-sv-build" : ""),
+      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "cho-pass-sv",
     NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:
-      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-      (isServerBuild ? "cho-pass-sv-build.appspot.com" : ""),
+      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "cho-pass-sv.firebasestorage.app",
     NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:
-      process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ||
-      (isServerBuild ? "1234567890" : ""),
+      process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "611963969345",
     NEXT_PUBLIC_FIREBASE_APP_ID:
-      process.env.NEXT_PUBLIC_FIREBASE_APP_ID ||
-      (isServerBuild ? "1:1234567890:web:build" : ""),
+      process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:611963969345:web:85f0c5a02334e31f0d0bc0",
     NEXT_PUBLIC_USE_FIREBASE_EMULATOR: process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR,
     NEXT_PUBLIC_EMULATOR_AUTH_URL: process.env.NEXT_PUBLIC_EMULATOR_AUTH_URL,
     NEXT_PUBLIC_EMULATOR_FIRESTORE_HOST: process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_HOST,
