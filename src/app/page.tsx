@@ -29,24 +29,27 @@ export default function HomePage() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-4 sm:py-6 space-y-8">
-      {/* Banner thông báo Design Showcase */}
-      <div className="bg-gradient-to-r from-primary-light to-urgent-bg/50 border border-primary/20 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-subtle">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shrink-0">
-            <Sparkles className="w-5 h-5" />
+      {/* Banner chào mừng sinh viên */}
+      <div className="bg-gradient-to-r from-primary-light via-surface to-urgent-bg/30 border border-primary/20 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-subtle">
+        <div className="flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-primary text-white flex items-center justify-center shrink-0 shadow-sm">
+            <GraduationCap className="w-6 h-6" />
           </div>
           <div>
-            <h4 className="text-sm font-bold text-text-main">
-              Giai đoạn 1: Design Tokens & Bộ Linh Kiện Đã Sẵn Sàng
+            <h4 className="text-sm sm:text-base font-heading font-bold text-text-main flex items-center gap-2">
+              Chào mừng bạn đến với Chợ Pass Sinh Viên!
+              <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-full bg-verified-bg text-verified-text border border-verified-border">
+                Uy tín 100%
+              </span>
             </h4>
-            <p className="text-xs text-text-secondary">
-              Xem thử nghiệm các thành phần (Buttons, Inputs, Cards, Badges, Dark/Light Mode, Phương án A/B).
+            <p className="text-xs text-text-secondary mt-0.5">
+              Cộng đồng pass đồ cũ chính chủ giữa sinh viên. Xác minh thẻ SV để xem liên hệ và giữ chỗ món đồ ưng ý.
             </p>
           </div>
         </div>
-        <Link href="/showcase" className="shrink-0">
+        <Link href="/listings/new" className="shrink-0">
           <Button variant="primary" size="sm" rightIcon={<ArrowRight className="w-4 h-4" />}>
-            Xem Showcase
+            Đăng món đồ ngay
           </Button>
         </Link>
       </div>

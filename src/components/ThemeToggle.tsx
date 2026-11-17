@@ -3,7 +3,11 @@
 import * as React from "react";
 import { Sun, Moon } from "lucide-react";
 
-export function ThemeToggle() {
+interface ThemeToggleProps {
+  showPaletteSwitcher?: boolean;
+}
+
+export function ThemeToggle({ showPaletteSwitcher = false }: ThemeToggleProps) {
   const [isDark, setIsDark] = React.useState(false);
   const [palette, setPalette] = React.useState<"emerald" | "ocean">("emerald");
 
@@ -45,36 +49,38 @@ export function ThemeToggle() {
 
   return (
     <div className="flex items-center gap-2">
-      {/* Nút đổi màu chủ đạo (Phương án A / B) */}
-      <div className="flex items-center bg-surface border border-surface-border rounded-lg p-0.5 shadow-subtle">
-        <button
-          type="button"
-          onClick={() => switchPalette("emerald")}
-          title="Phương án A: Xanh Ngọc Sinh Viên (Emerald)"
-          className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-semibold transition-all ${
-            palette === "emerald"
-              ? "bg-emerald-600 text-white shadow-sm"
-              : "text-text-secondary hover:text-text-main"
-          }`}
-        >
-          <span className="w-2 h-2 rounded-full bg-emerald-300" />
-          <span className="hidden sm:inline">Xanh Ngọc</span>
-        </button>
+      {/* Nút đổi màu chủ đạo (Chỉ hiện khi bật cờ showPaletteSwitcher trong trang thử nghiệm) */}
+      {showPaletteSwitcher && (
+        <div className="flex items-center bg-surface border border-surface-border rounded-lg p-0.5 shadow-subtle">
+          <button
+            type="button"
+            onClick={() => switchPalette("emerald")}
+            title="Phương án A: Xanh Ngọc Sinh Viên (Emerald)"
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-semibold transition-all ${
+              palette === "emerald"
+                ? "bg-emerald-600 text-white shadow-sm"
+                : "text-text-secondary hover:text-text-main"
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-300" />
+            <span className="hidden sm:inline">Xanh Ngọc</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => switchPalette("ocean")}
-          title="Phương án B: Xanh Lam Trí Tuệ (Ocean)"
-          className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-semibold transition-all ${
-            palette === "ocean"
-              ? "bg-blue-600 text-white shadow-sm"
-              : "text-text-secondary hover:text-text-main"
-          }`}
-        >
-          <span className="w-2 h-2 rounded-full bg-blue-300" />
-          <span className="hidden sm:inline">Xanh Lam</span>
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => switchPalette("ocean")}
+            title="Phương án B: Xanh Lam Trí Tuệ (Ocean)"
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-semibold transition-all ${
+              palette === "ocean"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-text-secondary hover:text-text-main"
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-blue-300" />
+            <span className="hidden sm:inline">Xanh Lam</span>
+          </button>
+        </div>
+      )}
 
       {/* Nút chuyển chế độ Sáng / Tối */}
       <button

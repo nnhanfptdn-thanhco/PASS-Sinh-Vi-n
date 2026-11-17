@@ -8,6 +8,7 @@ import { ListingCard } from "@/components/ui/ListingCard";
 import { SkeletonListingCard } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   Zap,
   ShieldCheck,
@@ -39,9 +40,12 @@ export default function ShowcasePage() {
               Thử nghiệm Thành phần Giao diện Chợ Pass SV
             </h1>
           </div>
-          <Badge variant="verified" className="text-sm px-3 py-1">
-            Chuẩn WCAG AA (Contrast &ge; 4.5:1)
-          </Badge>
+          <div className="flex items-center gap-3">
+            <ThemeToggle showPaletteSwitcher={true} />
+            <Badge variant="verified" className="text-sm px-3 py-1">
+              Chuẩn WCAG AA (Contrast &ge; 4.5:1)
+            </Badge>
+          </div>
         </div>
         <p className="text-sm text-text-secondary max-w-3xl leading-relaxed">
           Trang thử nghiệm các linh kiện giao diện mobile-first theo tài liệu đặc tả SPEC.md.
