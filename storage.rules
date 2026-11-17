@@ -18,27 +18,30 @@ service firebase.storage {
     }
 
     function isVerified() {
-      return isAuthenticated() && request.auth.token.verified == true;
+      return isAuthenticated() && (
+        request.auth.token.verified == true ||
+        request.auth.token.admin == true
+      );
     }
 
     function isValidImage() {
       return request.resource.contentType.matches('image/(jpeg|png|webp)') &&
-             request.resource.size <= 5 * 1024 * 1024; // Tối đa 5MB
+             request.resource.size <= 10 * 1024 * 1024; // Tối đa 10MB
     }
 
     // 1. Ảnh thẻ sinh viên (BẢO MẬT & RIÊNG TƯ TUYỆT ĐỐI)
-    // Người dùng thường không thể đọc ảnh thẻ của người khác
+    // Chỉ chủ tài khoản hoặc Quản trị viên mới được đọc/ghi
     match /private/cards/{userId}/{fileName} {
       allow read: if isOwner(userId) || isAdmin();
       allow write: if isOwner(userId) && isValidImage();
       allow delete: if isOwner(userId) || isAdmin();
     }
 
-    // 2. Ảnh tin đăng bán đồ (Công khai cho người mua xem)
+    // 2. Ảnh tin đăng bán đồ (Công khai đọc; chỉ sinh viên đã xác minh mới được tải lên)
     match /public/listings/{listingId}/{fileName} {
       allow read: if true;
       allow write: if isVerified() && isValidImage();
-      allow delete: if isVerified() || isAdmin();
+      allow delete: if isAdmin() || (isVerified() && request.auth.uid == resource.metadata.uploadedBy);
     }
 
     // 3. Ảnh đại diện người dùng
@@ -48,13 +51,19 @@ service firebase.storage {
       allow delete: if isOwner(userId) || isAdmin();
     }
 
-    // 4. Ảnh đính kèm trong tin nhắn chat
+    // 4. Ảnh đính kèm trong tin nhắn chat (Đối chiếu thành viên tham gia)
     match /private/chats/{chatId}/{fileName} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && isValidImage();
+      allow read: if isAuthenticated() && (
+        request.auth.uid in firestore.get(/databases/(default)/documents/conversations/$(chatId)).data.participantIds ||
+        isAdmin()
+      );
+      allow write: if isAuthenticated() && isValidImage() && (
+        request.auth.uid in firestore.get(/databases/(default)/documents/conversations/$(chatId)).data.participantIds
+      );
+      allow delete: if isAdmin();
     }
 
-    // Default deny all
+    // Default deny all others
     match /{allPaths=**} {
       allow read, write: if false;
     }

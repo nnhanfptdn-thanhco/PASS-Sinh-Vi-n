@@ -22,23 +22,24 @@ service cloud.firestore {
       );
     }
 
-    // 1. users: Công khai trường an toàn, chỉ chủ tài khoản ghi
+    // 1. users: Đọc công khai thông tin profile không nhạy cảm; tạo và xóa chỉ máy chủ; update chỉ displayName và photoURL
     match /users/{userId} {
       allow read: if true;
-      allow create, update: if isOwner(userId) || isAdmin();
-      allow delete: if isOwner(userId) || isAdmin();
+      allow create: if false; // Tạo bởi server API bootstrap
+      allow update: if (isOwner(userId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt'])) || isAdmin();
+      allow delete: if false; // Xóa qua server API account/delete
     }
 
-    // 2. usersPrivate: Chỉ chủ sở hữu và Admin đọc/ghi
+    // 2. usersPrivate: Chỉ chủ sở hữu và Admin đọc; ghi chỉ qua server Admin SDK
     match /usersPrivate/{userId} {
-      allow read, write: if isOwner(userId) || isAdmin();
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if false; // Chỉ qua Server Admin SDK
     }
 
-    // 3. verifications: Người dùng đọc hồ sơ của mình; Admin duyệt
+    // 3. verifications: Người dùng và Admin đọc hồ sơ của mình; mọi ghi/duyệt qua server API
     match /verifications/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId);
-      allow update, delete: if isAdmin();
+      allow write: if false; // Chỉ qua Server API verifications/submit và admin/verifications
     }
 
     // 4. regions & schools & categories (Danh mục hành chính & trường học)
@@ -57,51 +58,49 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 5. listings: Đọc công khai tin đang bán, giữ chỗ hoặc đã bán; chỉ SV đã xác minh được tạo tin
+    // 5. listings: Đọc công khai tin đang bán, giữ chỗ hoặc đã bán; mọi tạo/sửa/xóa qua server API để kiểm duyệt
     match /listings/{listingId} {
       allow read: if resource.data.status in ['active', 'reserved', 'sold'] 
                   || (isAuthenticated() && resource.data.sellerId == request.auth.uid)
                   || isAdmin();
-      allow create: if isVerified() && request.resource.data.sellerId == request.auth.uid;
-      allow update: if (isAuthenticated() && resource.data.sellerId == request.auth.uid) || isAdmin();
-      allow delete: if (isAuthenticated() && resource.data.sellerId == request.auth.uid) || isAdmin();
+      allow write: if false; // Toàn bộ tạo, sửa, đổi trạng thái qua API listings/create và listings/manage
     }
 
-    // 6. listingsPrivate: Chỉ người bán và người mua đã chốt đọc được địa chỉ chính xác
+    // 6. listingsPrivate: Chỉ người bán và người mua đã chốt đọc được địa chỉ chính xác; ghi qua Server API
     match /listingsPrivate/{listingId} {
       allow read: if isAuthenticated() && (
         resource.data.sellerId == request.auth.uid ||
         resource.data.confirmedBuyerId == request.auth.uid ||
         isAdmin()
       );
-      allow write: if isAuthenticated() && (
-        resource.data.sellerId == request.auth.uid ||
-        isAdmin()
-      );
+      allow write: if false; // Chỉ qua Server API
     }
 
-    // 7. reservations (Giữ chỗ)
+    // 7. reservations (Giữ chỗ): Mọi ghi qua Server API reservations/create và reservations/action
     match /reservations/{reservationId} {
       allow read: if isAuthenticated() && (
         resource.data.buyerId == request.auth.uid ||
         resource.data.sellerId == request.auth.uid ||
         isAdmin()
       );
-      allow create: if isVerified() && request.resource.data.buyerId == request.auth.uid;
-      allow update: if isAuthenticated() && (
-        resource.data.buyerId == request.auth.uid ||
-        resource.data.sellerId == request.auth.uid ||
-        isAdmin()
-      );
+      allow write: if false; // Chỉ qua Server API
     }
 
-    // 8. conversations & messages
+    // 8. conversations & messages: Bảo vệ chống tự chèn vào hội thoại của người khác
     match /conversations/{convId} {
-      allow read, write: if isAuthenticated() && (
+      allow read: if isAuthenticated() && (
         request.auth.uid in resource.data.participantIds ||
-        request.auth.uid in request.resource.data.participantIds ||
         isAdmin()
       );
+      allow create: if isAuthenticated() && (
+        request.auth.uid in request.resource.data.participantIds &&
+        request.resource.data.participantIds.size() == 2
+      );
+      allow update: if isAuthenticated() && (
+        request.auth.uid in resource.data.participantIds &&
+        request.resource.data.participantIds == resource.data.participantIds
+      );
+      allow delete: if isAdmin();
     }
 
     match /conversations/{convId}/messages/{msgId} {
@@ -111,8 +110,10 @@ service cloud.firestore {
       );
       allow create: if isAuthenticated() && (
         request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds &&
-        request.resource.data.senderId == request.auth.uid
+        request.resource.data.senderId == request.auth.uid &&
+        request.resource.data.text.size() <= 1000
       );
+      allow update, delete: if false;
     }
 
     // 9. favorites & follows
@@ -126,37 +127,42 @@ service cloud.firestore {
       allow create: if isAuthenticated() && request.auth.uid == request.resource.data.followerId;
     }
 
-    // 10. reviews
+    // 10. reviews: Ghi qua Server API reviews để kiểm tra deal completed
     match /reviews/{reviewId} {
       allow read: if true;
-      allow create: if isVerified() && (
-        request.resource.data.reviewerId == request.auth.uid
-      );
+      allow write: if false; // Chỉ qua Server API reviews
     }
 
-    // 11. reports & appeals
+    // 11. reports & appeals: Ghi qua Server API
     match /reports/{reportId} {
-      allow create: if isAuthenticated() && request.resource.data.reporterId == request.auth.uid;
       allow read: if (isAuthenticated() && resource.data.reporterId == request.auth.uid) || isAdmin();
-      allow update, delete: if isAdmin();
+      allow write: if false; // Chỉ qua Server API reports
     }
 
     match /appeals/{appealId} {
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow read: if (isAuthenticated() && resource.data.userId == request.auth.uid) || isAdmin();
-      allow update, delete: if isAdmin();
+      allow write: if false; // Chỉ qua Server API appeals
     }
 
-    // 12. notifications
+    // 12. notifications: Tạo chỉ từ máy chủ (chống lừa đảo, giả mạo); người dùng chỉ update trạng thái 'read'
     match /notifications/{notifId} {
-      allow read, update: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated();
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if false; // Tuyệt đối không cho client tạo thông báo
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid &&
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'updatedAt']);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
-    // 13. adminLogs: Chỉ Admin đọc, Server ghi
+    // 13. adminLogs: Chỉ Admin đọc, Server Admin SDK ghi
     match /adminLogs/{logId} {
       allow read: if isAdmin();
-      allow write: if false; // Chỉ qua Admin SDK phía server
+      allow write: if false;
+    }
+
+    // 14. contactViewLogs: Chỉ Admin đọc, Server ghi
+    match /contactViewLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Default deny all others
