@@ -3,25 +3,112 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Mặc định Phương án A: Emerald Pine */
+  --primary: 5 150 105; /* #059669 */
+  --primary-hover: 4 120 87; /* #047857 */
+  --primary-light: 236 253 245; /* #ecfdf5 */
+  --primary-focus: 16 185 129;
+
+  /* Nền và bề mặt (Light Mode) */
+  --background: 248 250 252; /* slate-50 */
+  --surface: 255 255 255;
+  --surface-muted: 241 245 249; /* slate-100 */
+  --surface-border: 226 232 240; /* slate-200 */
+
+  /* Chữ (Đạt chuẩn WCAG AA >= 4.5:1) */
+  --text-main: 15 23 42; /* slate-900 (15.8:1) */
+  --text-secondary: 71 85 105; /* slate-600 (5.7:1) */
+  --text-muted: 100 116 139; /* slate-500 (4.5:1) */
+
+  /* Màu nhấn "Pass trong ngày" (Urgent) */
+  --urgent-bg: 254 243 199; /* amber-100 */
+  --urgent-text: 146 64 14; /* amber-800 */
+  --urgent-border: 245 158 11; /* amber-500 */
+  --urgent-solid: 217 119 6; /* amber-600 */
+
+  /* Màu "Đã xác minh" (Verified) */
+  --verified-bg: 240 253 244;
+  --verified-text: 22 101 52;
+  --verified-border: 34 197 94;
+
+  /* Màu cảnh báo (Danger) */
+  --danger-bg: 254 242 242;
+  --danger-text: 153 27 27;
+  --danger-solid: 220 38 38;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Phương án B: Ocean Indigo */
+[data-theme="ocean"] {
+  --primary: 37 99 235; /* #2563eb */
+  --primary-hover: 29 78 216; /* #1d4ed8 */
+  --primary-light: 239 246 255; /* #eff6ff */
+  --primary-focus: 59 130 246;
+}
+
+/* Dark Mode */
+.dark {
+  --background: 15 23 42; /* slate-900 */
+  --surface: 30 41 59; /* slate-800 */
+  --surface-muted: 51 65 85; /* slate-700 */
+  --surface-border: 71 85 105; /* slate-600 */
+
+  --text-main: 248 250 252; /* slate-50 (14.2:1) */
+  --text-secondary: 203 213 225; /* slate-300 (8.1:1) */
+  --text-muted: 148 163 184; /* slate-400 (5.3:1) */
+
+  --urgent-bg: 120 53 15; /* amber-900 / 60% */
+  --urgent-text: 254 240 138; /* amber-200 */
+  --urgent-border: 217 119 6;
+
+  --verified-bg: 20 83 45;
+  --verified-text: 187 247 208;
+  --verified-border: 34 197 94;
+
+  --danger-bg: 127 29 29;
+  --danger-text: 254 202 202;
+}
+
+/* Global Reset & Base Typography */
+* {
+  box-sizing: border-box;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: rgb(var(--background));
+  color: rgb(var(--text-main));
+  font-family: var(--font-vietnam), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
+/* Đảm bảo vùng bấm tối thiểu 44px trên mobile */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Hiệu ứng focus bàn phím rõ ràng */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgb(var(--primary));
+  outline-offset: 2px;
+}
+
+/* Tôn trọng người dùng tắt hiệu ứng chuyển động */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
