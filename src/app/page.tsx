@@ -4,7 +4,6 @@ import {
   Search,
   MapPin,
   GraduationCap,
-  Sparkles,
   BookOpen,
   Tv,
   Bike,
