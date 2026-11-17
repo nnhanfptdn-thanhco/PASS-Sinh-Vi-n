@@ -1,0 +1,298 @@
+[
+  {
+    "code": "QSX",
+    "name": "Trường Đại học Bách khoa - ĐHQG TP.HCM",
+    "shortName": "HCMUT",
+    "provinceCode": "79",
+    "wardCode": "27139",
+    "address": "268 Lý Thường Kiệt, Phường 14, TP.HCM",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Cơ sở 1 (Lý Thường Kiệt)",
+        "provinceCode": "79",
+        "wardCode": "27139",
+        "address": "268 Lý Thường Kiệt, P. 14, TP.HCM"
+      },
+      {
+        "id": "c2",
+        "name": "Cơ sở 2 (Dĩ An / KTX Khu B)",
+        "provinceCode": "74",
+        "wardCode": "25753",
+        "address": "Khu đô thị ĐHQG, Phường Đông Hòa, Dĩ An"
+      }
+    ],
+    "emailDomains": ["hcmut.edu.vn"],
+    "dorms": ["KTX Bách Khoa (497 Hòa Hảo)", "KTX Khu A ĐHQG", "KTX Khu B ĐHQG"]
+  },
+  {
+    "code": "QST",
+    "name": "Trường Đại học Khoa học Tự nhiên - ĐHQG TP.HCM",
+    "shortName": "HCMUS",
+    "provinceCode": "79",
+    "wardCode": "27196",
+    "address": "227 Nguyễn Văn Cừ, Phường 4, TP.HCM",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Cơ sở 1 (Nguyễn Văn Cừ)",
+        "provinceCode": "79",
+        "wardCode": "27196",
+        "address": "227 Nguyễn Văn Cừ, P. 4, TP.HCM"
+      },
+      {
+        "id": "c2",
+        "name": "Cơ sở 2 (Linh Trung)",
+        "provinceCode": "79",
+        "wardCode": "26830",
+        "address": "Khu phố 6, P. Linh Trung, TP.HCM"
+      }
+    ],
+    "emailDomains": ["hcmus.edu.vn"],
+    "dorms": ["KTX 135B Trần Hưng Đạo", "KTX Khu A ĐHQG", "KTX Khu B ĐHQG"]
+  },
+  {
+    "code": "QSC",
+    "name": "Trường Đại học Công nghệ Thông tin - ĐHQG TP.HCM",
+    "shortName": "UIT",
+    "provinceCode": "79",
+    "wardCode": "26830",
+    "address": "Khu phố 6, Phường Linh Trung, TP.HCM",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Trụ sở chính Linh Trung",
+        "provinceCode": "79",
+        "wardCode": "26830",
+        "address": "Khu phố 6, P. Linh Trung, TP.HCM"
+      }
+    ],
+    "emailDomains": ["uit.edu.vn", "gm.uit.edu.vn"],
+    "dorms": ["KTX Khu A ĐHQG", "KTX Khu B ĐHQG"]
+  },
+  {
+    "code": "QSX-XH",
+    "name": "Trường Đại học Khoa học Xã hội và Nhân văn - ĐHQG TP.HCM",
+    "shortName": "USSH-HCM",
+    "provinceCode": "79",
+    "wardCode": "26740",
+    "address": "10-12 Đinh Tiên Hoàng, Phường Bến Nghé, TP.HCM",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Cơ sở 1 (Đinh Tiên Hoàng)",
+        "provinceCode": "79",
+        "wardCode": "26740",
+        "address": "10-12 Đinh Tiên Hoàng, P. Bến Nghé, TP.HCM"
+      },
+      {
+        "id": "c2",
+        "name": "Cơ sở 2 (Linh Trung)",
+        "provinceCode": "79",
+        "wardCode": "26830",
+        "address": "P. Linh Trung, TP.HCM"
+      }
+    ],
+    "emailDomains": ["hcmussh.edu.vn"],
+    "dorms": ["KTX Khu A ĐHQG", "KTX Khu B ĐHQG"]
+  },
+  {
+    "code": "KSA",
+    "name": "Đại học Kinh tế TP. Hồ Chí Minh",
+    "shortName": "UEH",
+    "provinceCode": "79",
+    "wardCode": "26740",
+    "address": "59C Nguyễn Đình Chiểu, Phường Võ Thị Sáu, TP.HCM",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Cơ sở A (Nguyễn Đình Chiểu)",
+        "provinceCode": "79",
+        "wardCode": "26740",
+        "address": "59C Nguyễn Đình Chiểu, TP.HCM"
+      },
+      {
+        "id": "c2",
+        "name": "Cơ sở B (Nguyễn Tri Phương)",
+        "provinceCode": "79",
+        "wardCode": "27139",
+        "address": "279 Nguyễn Tri Phương, P. 5, TP.HCM"
+      },
+      {
+        "id": "c3",
+        "name": "Cơ sở N (Nam Sài Gòn)",
+        "provinceCode": "79",
+        "wardCode": "27253",
+        "address": "Nguyễn Văn Linh, TP.HCM"
+      }
+    ],
+    "emailDomains": ["ueh.edu.vn", "st.ueh.edu.vn"],
+    "dorms": ["KTX 135 Trần Hưng Đạo", "KTX 43-45 Nguyễn Chí Thanh"]
+  },
+  {
+    "code": "BKA",
+    "name": "Đại học Bách khoa Hà Nội",
+    "shortName": "HUST",
+    "provinceCode": "01",
+    "wardCode": "00256",
+    "address": "Số 1 Đại Cồ Việt, Phường Bách Khoa, Hà Nội",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Trụ sở chính Đại Cồ Việt",
+        "provinceCode": "01",
+        "wardCode": "00256",
+        "address": "Số 1 Đại Cồ Việt, P. Bách Khoa, Hà Nội"
+      }
+    ],
+    "emailDomains": ["hust.edu.vn", "sis.hust.edu.vn"],
+    "dorms": ["KTX Bách Khoa Hà Nội (Khu B5, B6, B7, B9, B10)"]
+  },
+  {
+    "code": "KHA",
+    "name": "Trường Đại học Kinh tế Quốc dân",
+    "shortName": "NEU",
+    "provinceCode": "01",
+    "wardCode": "00256",
+    "address": "207 Giải Phóng, Phường Đồng Tâm, Hà Nội",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Trụ sở chính Giải Phóng",
+        "provinceCode": "01",
+        "wardCode": "00256",
+        "address": "207 Giải Phóng, Hà Nội"
+      }
+    ],
+    "emailDomains": ["neu.edu.vn", "st.neu.edu.vn"],
+    "dorms": ["KTX Kinh tế Quốc dân"]
+  },
+  {
+    "code": "QHI",
+    "name": "Trường Đại học Công nghệ - ĐHQG Hà Nội",
+    "shortName": "UET",
+    "provinceCode": "01",
+    "wardCode": "00169",
+    "address": "144 Xuân Thủy, Phường Dịch Vọng Hậu, Hà Nội",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Cơ sở Cầu Giấy (144 Xuân Thủy)",
+        "provinceCode": "01",
+        "wardCode": "00169",
+        "address": "144 Xuân Thủy, P. Dịch Vọng Hậu, Hà Nội"
+      },
+      {
+        "id": "c2",
+        "name": "Cơ sở Hòa Lạc",
+        "provinceCode": "01",
+        "wardCode": "00400",
+        "address": "Khu công nghệ cao Hòa Lạc, Hà Nội"
+      }
+    ],
+    "emailDomains": ["vnu.edu.vn", "uet.vnu.edu.vn"],
+    "dorms": ["KTX Ngoại Ngữ 144 Xuân Thủy", "KTX Mỹ Đình"]
+  },
+  {
+    "code": "NTH",
+    "name": "Trường Đại học Ngoại thương",
+    "shortName": "FTU",
+    "provinceCode": "01",
+    "wardCode": "00187",
+    "address": "91 Chùa Láng, Phường Láng Thượng, Hà Nội",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Trụ sở Hà Nội (Chùa Láng)",
+        "provinceCode": "01",
+        "wardCode": "00187",
+        "address": "91 Chùa Láng, P. Láng Thượng, Hà Nội"
+      },
+      {
+        "id": "c2",
+        "name": "Cơ sở II (TP.HCM)",
+        "provinceCode": "79",
+        "wardCode": "26840",
+        "address": "15 Đường D5, P. 25, Bình Thạnh, TP.HCM"
+      }
+    ],
+    "emailDomains": ["ftu.edu.vn"],
+    "dorms": ["KTX Ngoại Thương Hà Nội"]
+  },
+  {
+    "code": "DDK",
+    "name": "Trường Đại học Bách khoa - Đại học Đà Nẵng",
+    "shortName": "DUT",
+    "provinceCode": "48",
+    "wardCode": "20200",
+    "address": "54 Nguyễn Lương Bằng, Phường Hòa Khánh Bắc, Đà Nẵng",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Trụ sở chính Liên Chiểu",
+        "provinceCode": "48",
+        "wardCode": "20200",
+        "address": "54 Nguyễn Lương Bằng, P. Hòa Khánh Bắc, Đà Nẵng"
+      }
+    ],
+    "emailDomains": ["dut.udn.vn"],
+    "dorms": ["KTX Khu Tây Đà Nẵng", "KTX Bách Khoa Đà Nẵng"]
+  },
+  {
+    "code": "TCT",
+    "name": "Trường Đại học Cần Thơ",
+    "shortName": "CTU",
+    "provinceCode": "92",
+    "wardCode": "31147",
+    "address": "Khu II, Đường 3/2, Phường Xuân Khánh, Cần Thơ",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Khu II (Đường 3/2)",
+        "provinceCode": "92",
+        "wardCode": "31147",
+        "address": "Đường 3/2, P. Xuân Khánh, Cần Thơ"
+      }
+    ],
+    "emailDomains": ["ctu.edu.vn"],
+    "dorms": ["KTX Khu A & Khu B Đại học Cần Thơ"]
+  },
+  {
+    "code": "DTH",
+    "name": "Đại học Thái Nguyên",
+    "shortName": "TNU",
+    "provinceCode": "19",
+    "wardCode": "06520",
+    "address": "Phường Tân Thịnh, TP. Thái Nguyên",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Trụ sở chính Tân Thịnh",
+        "provinceCode": "19",
+        "wardCode": "06520",
+        "address": "P. Tân Thịnh, Thái Nguyên"
+      }
+    ],
+    "emailDomains": ["tnu.edu.vn"],
+    "dorms": ["KTX Đại học Thái Nguyên"]
+  },
+  {
+    "code": "DHH",
+    "name": "Đại học Huế",
+    "shortName": "HUEUNI",
+    "provinceCode": "46",
+    "wardCode": "19800",
+    "address": "03 Lê Lợi, Phường Vĩnh Ninh, TP. Huế",
+    "campuses": [
+      {
+        "id": "c1",
+        "name": "Trụ sở chính Lê Lợi",
+        "provinceCode": "46",
+        "wardCode": "19800",
+        "address": "03 Lê Lợi, P. Vĩnh Ninh, Huế"
+      }
+    ],
+    "emailDomains": ["hueuni.edu.vn"],
+    "dorms": ["KTX Đống Đa Huế", "KTX Tây Lộc"]
+  }
+]

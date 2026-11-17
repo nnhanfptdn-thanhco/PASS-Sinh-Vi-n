@@ -3,6 +3,7 @@ import { Be_Vietnam_Pro, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { Header } from "@/components/navigation/Header";
 import { MobileBottomNav } from "@/components/navigation/MobileBottomNav";
+import { AuthProvider } from "@/lib/auth/AuthContext";
 
 const beVietnamPro = Be_Vietnam_Pro({
   subsets: ["latin", "vietnamese"],
@@ -48,9 +49,11 @@ export default function RootLayout({
       <body
         className={`${beVietnamPro.variable} ${plusJakartaSans.variable} min-h-screen bg-background text-text-main flex flex-col font-body antialiased`}
       >
-        <Header />
-        <main className="flex-1 pb-20 md:pb-8">{children}</main>
-        <MobileBottomNav />
+        <AuthProvider>
+          <Header />
+          <main className="flex-1 pb-20 md:pb-8">{children}</main>
+          <MobileBottomNav />
+        </AuthProvider>
       </body>
     </html>
   );

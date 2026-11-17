@@ -1,6 +1,59 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.admin == true ||
+        request.auth.token.role == 'admin'
+      );
+    }
+
+    function isVerified() {
+      return isAuthenticated() && request.auth.token.verified == true;
+    }
+
+    function isValidImage() {
+      return request.resource.contentType.matches('image/(jpeg|png|webp)') &&
+             request.resource.size <= 5 * 1024 * 1024; // Tối đa 5MB
+    }
+
+    // 1. Ảnh thẻ sinh viên (BẢO MẬT & RIÊNG TƯ TUYỆT ĐỐI)
+    // Người dùng thường không thể đọc ảnh thẻ của người khác
+    match /private/cards/{userId}/{fileName} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) && isValidImage();
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // 2. Ảnh tin đăng bán đồ (Công khai cho người mua xem)
+    match /public/listings/{listingId}/{fileName} {
+      allow read: if true;
+      allow write: if isVerified() && isValidImage();
+      allow delete: if isVerified() || isAdmin();
+    }
+
+    // 3. Ảnh đại diện người dùng
+    match /public/avatars/{userId}/{fileName} {
+      allow read: if true;
+      allow write: if isOwner(userId) && isValidImage();
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // 4. Ảnh đính kèm trong tin nhắn chat
+    match /private/chats/{chatId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidImage();
+    }
+
     // Default deny all
     match /{allPaths=**} {
       allow read, write: if false;

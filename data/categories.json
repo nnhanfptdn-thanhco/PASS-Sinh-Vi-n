@@ -1,0 +1,66 @@
+[
+  {
+    "id": "dien-may",
+    "name": "Điện máy",
+    "icon": "Tv",
+    "description": "Quạt đứng, tủ lạnh mini, nồi cơm điện, đèn học, ấm siêu tốc, máy sấy tóc",
+    "subcategories": ["Quạt đứng / quạt bàn", "Tủ lạnh mini", "Nồi cơm điện", "Ấm siêu tốc", "Đèn học / đèn bàn", "Bếp điện / bếp từ", "Máy sấy tóc", "Khác"]
+  },
+  {
+    "id": "noi-that",
+    "name": "Nội thất",
+    "icon": "Armchair",
+    "description": "Bàn học gấp, ghế xoay, tủ quần áo vải, giá sách, gương đứng",
+    "subcategories": ["Bàn học gấp", "Ghế xoay / ghế tựa", "Tủ vải / tủ nhựa", "Kệ sách / giá để đồ", "Gương đứng", "Đệm / nệm gấp", "Khác"]
+  },
+  {
+    "id": "giao-trinh",
+    "name": "Sách và giáo trình",
+    "icon": "BookOpen",
+    "description": "Giáo trình đại cương, sách chuyên ngành, tài liệu ôn thi, từ điển",
+    "subcategories": ["Giáo trình đại cương (Giải tích, Đại số, Triết...)", "Sách chuyên ngành", "Tài liệu ôn thi / đồ án", "Sách học ngoại ngữ / TOEIC / IELTS", "Truyện / tiểu thuyết", "Khác"]
+  },
+  {
+    "id": "xe-co",
+    "name": "Xe cộ",
+    "icon": "Bike",
+    "description": "Xe đạp thể thao, xe đạp mini, xe máy số, xe tay ga, xe máy điện",
+    "subcategories": ["Xe đạp thể thao / địa hình", "Xe đạp mini sinh viên", "Xe máy số (Wave, Sirius...)", "Xe tay ga (Vision, Air Blade...)", "Xe điện / xe máy điện", "Phụ kiện xe / mũ bảo hiểm", "Khác"],
+    "requiresMotorbikeInfo": true
+  },
+  {
+    "id": "do-bep",
+    "name": "Đồ bếp",
+    "icon": "Coffee",
+    "description": "Nồi chảo, bát đĩa, kệ gia vị, hộp đựng thức ăn, bình giữ nhiệt",
+    "subcategories": ["Chảo chống dính / bộ nồi", "Bát đĩa / đũa thìa", "Hộp đựng cơm / hộp bảo quản", "Bình giữ nhiệt / bình nước", "Dao kéo / thớt", "Khác"]
+  },
+  {
+    "id": "quan-ao",
+    "name": "Quần áo và chăn ga",
+    "icon": "Shirt",
+    "description": "Áo khoác, chăn ga gối, chiếu trúc, rèm che giường ký túc xá",
+    "subcategories": ["Áo khoác mùa đông", "Chăn bông / ruột chăn", "Ga gối / vỏ chăn", "Chiếu trúc / chiếu cói", "Rèm che giường KTX", "Quần áo thường ngày", "Khác"]
+  },
+  {
+    "id": "the-thao",
+    "name": "Thể thao",
+    "icon": "Trophy",
+    "description": "Vợt cầu lông, bóng đá, bóng rổ, thảm yoga, giày thể thao",
+    "subcategories": ["Vợt & quả cầu lông", "Bóng đá / giày đá bóng", "Bóng rổ", "Thảm tập yoga / tạ tay", "Ván trượt / patin", "Khác"]
+  },
+  {
+    "id": "hoc-cu",
+    "name": "Học cụ",
+    "icon": "PenTool",
+    "description": "Máy tính cầm tay bỏ túi, bảng vẽ điện tử, thước vẽ kỹ thuật",
+    "subcategories": ["Máy tính bỏ túi (Casio fx 580...)", "Bảng vẽ điện tử", "Bộ compa / thước vẽ kỹ thuật", "Balo / cặp đi học", "Chuột / bàn phím máy tính", "Khác"]
+  },
+  {
+    "id": "khac",
+    "name": "Khác",
+    "icon": "Layers",
+    "description": "Các món đồ sinh viên hữu ích khác",
+    "subcategories": ["Đồ trang trí phòng trọ", "Cây cảnh mini", "Đồ thú cưng", "Món đồ linh tinh"]
+  }
+]

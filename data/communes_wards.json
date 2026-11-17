@@ -1,0 +1,182 @@
+[
+  {
+    "code": "26830",
+    "name": "Phường Linh Trung",
+    "provinceCode": "79",
+    "type": "phuong",
+    "oldDistrictName": "Thành phố Thủ Đức (Quận Thủ Đức cũ)",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["linh trung", "lang dai hoc", "thu duc", "dhqg"]
+  },
+  {
+    "code": "26833",
+    "name": "Phường Linh Chiểu",
+    "provinceCode": "79",
+    "type": "phuong",
+    "oldDistrictName": "Thành phố Thủ Đức",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["linh chieu", "thu duc", "spkt"]
+  },
+  {
+    "code": "26840",
+    "name": "Phường Tăng Nhơn Phú A",
+    "provinceCode": "79",
+    "type": "phuong",
+    "oldDistrictName": "Thành phố Thủ Đức (Quận 9 cũ)",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["tang nhon phu a", "quan 9", "giao thong van tai", "ptit"]
+  },
+  {
+    "code": "27139",
+    "name": "Phường 14",
+    "provinceCode": "79",
+    "type": "phuong",
+    "oldDistrictName": "Quận 10 cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["phuong 14", "quan 10", "bach khoa", "ly thuong kiet"]
+  },
+  {
+    "code": "27196",
+    "name": "Phường 4",
+    "provinceCode": "79",
+    "type": "phuong",
+    "oldDistrictName": "Quận 5 cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["phuong 4", "quan 5", "khtn", "su pham", "sai gon"]
+  },
+  {
+    "code": "26740",
+    "name": "Phường Bến Nghé",
+    "provinceCode": "79",
+    "type": "phuong",
+    "oldDistrictName": "Quận 1 cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["ben nghe", "quan 1", "ussh", "nhan van", "duoc"]
+  },
+  {
+    "code": "27253",
+    "name": "Phường Tân Phong",
+    "provinceCode": "79",
+    "type": "phuong",
+    "oldDistrictName": "Quận 7 cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["tan phong", "quan 7", "ton duc thang", "rmit"]
+  },
+  {
+    "code": "25753",
+    "name": "Phường Đông Hòa",
+    "provinceCode": "74",
+    "type": "phuong",
+    "oldDistrictName": "Thành phố Dĩ An",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["dong hoa", "di an", "ktx khu a", "ktx khu b", "lang dai hoc"]
+  },
+  {
+    "code": "00169",
+    "name": "Phường Dịch Vọng Hậu",
+    "provinceCode": "01",
+    "type": "phuong",
+    "oldDistrictName": "Quận Cầu Giấy cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["dich vong hau", "cau giay", "dhqg ha noi", "su pham", "bao chi"]
+  },
+  {
+    "code": "00256",
+    "name": "Phường Bách Khoa",
+    "provinceCode": "01",
+    "type": "phuong",
+    "oldDistrictName": "Quận Hai Bà Trưng cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["bach khoa", "hai ba trung", "hust", "neu", "xay dung", "nuce"]
+  },
+  {
+    "code": "00187",
+    "name": "Phường Láng Thượng",
+    "provinceCode": "01",
+    "type": "phuong",
+    "oldDistrictName": "Quận Đống Đa cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["lang thuong", "dong da", "ngoai thuong", "ftu", "ngoai giao", "luat"]
+  },
+  {
+    "code": "00400",
+    "name": "Phường Mỹ Đình 2",
+    "provinceCode": "01",
+    "type": "phuong",
+    "oldDistrictName": "Quận Nam Từ Liêm cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["my dinh", "nam tu liem", "fpt", "thuong mai"]
+  },
+  {
+    "code": "20200",
+    "name": "Phường Hòa Khánh Bắc",
+    "provinceCode": "48",
+    "type": "phuong",
+    "oldDistrictName": "Quận Liên Chiểu cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["hoa khanh", "lien chieu", "bach khoa da nang", "su pham da nang"]
+  },
+  {
+    "code": "20245",
+    "name": "Phường Hòa Quý",
+    "provinceCode": "48",
+    "type": "phuong",
+    "oldDistrictName": "Quận Ngũ Hành Sơn cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["hoa quy", "ngu hanh son", "vku", "y duoc da nang"]
+  },
+  {
+    "code": "31147",
+    "name": "Phường Xuân Khánh",
+    "provinceCode": "92",
+    "type": "phuong",
+    "oldDistrictName": "Quận Ninh Kiều cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["xuan khanh", "ninh kieu", "dai hoc can tho", "khu 2"]
+  },
+  {
+    "code": "31150",
+    "name": "Phường An Khánh",
+    "provinceCode": "92",
+    "type": "phuong",
+    "oldDistrictName": "Quận Ninh Kiều cũ",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["an khanh", "ninh kieu", "y duoc can tho"]
+  },
+  {
+    "code": "06520",
+    "name": "Phường Tân Thịnh",
+    "provinceCode": "19",
+    "type": "phuong",
+    "oldDistrictName": "Thành phố Thái Nguyên",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["tan thinh", "thai nguyen", "dai hoc thai nguyen", "su pham thai nguyen"]
+  },
+  {
+    "code": "19800",
+    "name": "Phường Vĩnh Ninh",
+    "provinceCode": "46",
+    "type": "phuong",
+    "oldDistrictName": "Thành phố Huế",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["vinh ninh", "hue", "dai hoc hue", "khoa hoc hue", "y duoc hue"]
+  }
+]

@@ -1,0 +1,274 @@
+[
+  {
+    "code": "01",
+    "name": "Hà Nội",
+    "type": "thanh-pho",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["ha noi", "thu do", "hn"]
+  },
+  {
+    "code": "79",
+    "name": "TP. Hồ Chí Minh",
+    "type": "thanh-pho",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["ho chi minh", "tphcm", "tp hcm", "sai gon", "hcm"]
+  },
+  {
+    "code": "48",
+    "name": "Đà Nẵng",
+    "type": "thanh-pho",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["da nang", "dn"]
+  },
+  {
+    "code": "31",
+    "name": "Hải Phòng",
+    "type": "thanh-pho",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["hai phong", "hp"]
+  },
+  {
+    "code": "92",
+    "name": "Cần Thơ",
+    "type": "thanh-pho",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["can tho", "ct"]
+  },
+  {
+    "code": "19",
+    "name": "Thái Nguyên",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["thai nguyen", "tn"]
+  },
+  {
+    "code": "46",
+    "name": "Thừa Thiên Huế",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["thua thien hue", "hue"]
+  },
+  {
+    "code": "74",
+    "name": "Bình Dương",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["binh duong", "thu dau mot", "di an"]
+  },
+  {
+    "code": "75",
+    "name": "Đồng Nai",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["dong nai", "bien hoa"]
+  },
+  {
+    "code": "77",
+    "name": "Bà Rịa - Vũng Tàu",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["ba ria vung tau", "vung tau", "brvt"]
+  },
+  {
+    "code": "56",
+    "name": "Khánh Hòa",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["khanh hoa", "nha trang"]
+  },
+  {
+    "code": "68",
+    "name": "Lâm Đồng",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["lam dong", "da lat"]
+  },
+  {
+    "code": "66",
+    "name": "Đắk Lắk",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["dak lak", "buon ma thuot"]
+  },
+  {
+    "code": "38",
+    "name": "Thanh Hóa",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["thanh hoa"]
+  },
+  {
+    "code": "40",
+    "name": "Nghệ An",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["nghe an", "vinh"]
+  },
+  {
+    "code": "27",
+    "name": "Bắc Ninh",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["bac ninh"]
+  },
+  {
+    "code": "24",
+    "name": "Bắc Giang",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["bac giang"]
+  },
+  {
+    "code": "22",
+    "name": "Quảng Ninh",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["quang ninh", "ha long"]
+  },
+  {
+    "code": "25",
+    "name": "Phú Thọ",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["phu tho", "viet tri"]
+  },
+  {
+    "code": "33",
+    "name": "Hưng Yên",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["hung yen"]
+  },
+  {
+    "code": "42",
+    "name": "Hà Tĩnh",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["ha tinh"]
+  },
+  {
+    "code": "49",
+    "name": "Quảng Nam",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["quang nam", "tam ky", "hoi an"]
+  },
+  {
+    "code": "52",
+    "name": "Bình Định",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["binh dinh", "quy nhon"]
+  },
+  {
+    "code": "64",
+    "name": "Gia Lai",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["gia lai", "pleiku"]
+  },
+  {
+    "code": "70",
+    "name": "Bình Phước",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["binh phuoc", "dong xoai"]
+  },
+  {
+    "code": "72",
+    "name": "Tây Ninh",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["tay ninh"]
+  },
+  {
+    "code": "60",
+    "name": "Bình Thuận",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["binh thuan", "phan thiet"]
+  },
+  {
+    "code": "80",
+    "name": "Long An",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["long an", "tan an"]
+  },
+  {
+    "code": "82",
+    "name": "Tiền Giang",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["tien giang", "my tho"]
+  },
+  {
+    "code": "86",
+    "name": "Vĩnh Long",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["vinh long"]
+  },
+  {
+    "code": "87",
+    "name": "Đồng Tháp",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["dong thap", "cao lanh"]
+  },
+  {
+    "code": "89",
+    "name": "An Giang",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["an giang", "long xuyen"]
+  },
+  {
+    "code": "91",
+    "name": "Kiên Giang",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["kien giang", "rach gia", "phu quoc"]
+  },
+  {
+    "code": "96",
+    "name": "Cà Mau",
+    "type": "tinh",
+    "effectiveDate": "2025-07-01",
+    "replacedBy": null,
+    "searchKeywords": ["ca mau"]
+  }
+]
