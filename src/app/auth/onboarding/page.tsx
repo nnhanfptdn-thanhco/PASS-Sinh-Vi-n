@@ -9,6 +9,7 @@ import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
+import { UniversitySelect } from "@/components/ui/UniversitySelect";
 import {
   ShieldCheck,
   GraduationCap,
@@ -74,6 +75,31 @@ function OnboardingContent() {
       }));
     }
   };
+
+  const currentSchool = React.useMemo(() => {
+    return universitiesData.find((s) => s.code === formData.schoolCode) || universitiesData[0];
+  }, [formData.schoolCode]);
+
+  // Tự nhận diện trường học nếu email đăng nhập là email sinh viên (@fpt.edu.vn, @hcmut.edu.vn...)
+  React.useEffect(() => {
+    if (user?.email) {
+      const emailLower = user.email.toLowerCase();
+      const detected = universitiesData.find((s) =>
+        s.emailDomains?.some(
+          (d) => emailLower.endsWith(`@${d}`) || emailLower.endsWith(`.${d}`)
+        )
+      );
+      if (detected) {
+        setFormData((prev) => ({
+          ...prev,
+          schoolCode: detected.code,
+          campusId: detected.campuses[0]?.id || "c1",
+          provinceCode: detected.provinceCode,
+          wardCode: detected.wardCode,
+        }));
+      }
+    }
+  }, [user?.email]);
 
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -302,23 +328,43 @@ function OnboardingContent() {
               />
             </div>
 
-            {/* Chọn trường từ danh mục toàn quốc */}
-            <div className="space-y-1.5">
-              <label className="block text-sm font-medium text-text-main">
-                Trường Đại học / Cao đẳng / Học viện *
-              </label>
-              <select
-                value={formData.schoolCode}
-                onChange={(e) => handleSchoolChange(e.target.value)}
-                className="w-full h-11 px-3 bg-surface border border-surface-border rounded-lg text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                {universitiesData.map((s) => (
-                  <option key={s.code} value={s.code}>
-                    {s.name} ({s.shortName})
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* Chọn trường từ danh mục toàn quốc (có ô gõ tìm kiếm thông minh) */}
+            <UniversitySelect
+              value={formData.schoolCode}
+              onChange={(code) => handleSchoolChange(code)}
+              label="Trường Đại học / Cao đẳng / Học viện *"
+              placeholder="Gõ tìm trường (vd: FPT, Bách Khoa, Kinh Tế, HUST, UEH, DUT...)"
+              helperText="Hỗ trợ gõ tiếng Việt có dấu, không dấu hoặc tên viết tắt"
+            />
+
+            {/* Nếu trường có nhiều hơn 1 cơ sở / campus, cho chọn campus cụ thể */}
+            {currentSchool && currentSchool.campuses && currentSchool.campuses.length > 1 && (
+              <div className="space-y-1.5 p-3 bg-surface-muted/60 border border-surface-border rounded-xl">
+                <label className="block text-xs font-semibold text-text-main">
+                  Cơ sở / Campus trực thuộc ({currentSchool.campuses.length} cơ sở) *
+                </label>
+                <select
+                  value={formData.campusId}
+                  onChange={(e) => {
+                    const cid = e.target.value;
+                    const c = currentSchool.campuses.find((camp) => camp.id === cid);
+                    setFormData((prev) => ({
+                      ...prev,
+                      campusId: cid,
+                      provinceCode: c?.provinceCode || prev.provinceCode,
+                      wardCode: c?.wardCode || prev.wardCode,
+                    }));
+                  }}
+                  className="w-full h-10 px-3 bg-surface border border-surface-border rounded-lg text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  {currentSchool.campuses.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.address})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <Input

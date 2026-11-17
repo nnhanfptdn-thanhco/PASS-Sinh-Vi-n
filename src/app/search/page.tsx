@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/Badge";
 import { ListingCard } from "@/components/ui/ListingCard";
 import { SkeletonListingCard } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { UniversitySelect } from "@/components/ui/UniversitySelect";
 import {
   Search as SearchIcon,
   SlidersHorizontal,
@@ -17,7 +18,6 @@ import {
   GraduationCap,
 } from "lucide-react";
 import categoriesData from "../../../data/categories.json";
-import universitiesData from "../../../data/universities_vietnam.json";
 import provincesData from "../../../data/provinces_34.json";
 
 interface SearchCardItem {
@@ -216,21 +216,14 @@ function SearchContent() {
             </div>
 
             {/* Lọc trường */}
-            <div className="space-y-1.5">
-              <label className="font-semibold text-text-main">Trường Đại học</label>
-              <select
-                value={selectedSchool}
-                onChange={(e) => setSelectedSchool(e.target.value)}
-                className="w-full h-10 px-2.5 bg-surface border border-surface-border rounded-lg text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="all">Tất cả các trường</option>
-                {universitiesData.map((s) => (
-                  <option key={s.code} value={s.code}>
-                    {s.shortName} - {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <UniversitySelect
+              value={selectedSchool}
+              onChange={(code) => setSelectedSchool(code)}
+              label="Trường Đại học"
+              allowAll={true}
+              allLabel="Tất cả các trường toàn quốc"
+              placeholder="Gõ tìm trường (vd: FPT, BK, HUST...)"
+            />
 
             {/* Sắp xếp */}
             <div className="space-y-1.5">
