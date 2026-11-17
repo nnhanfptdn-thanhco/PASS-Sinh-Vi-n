@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "cho-pass-sv-dev"
+    "default": "cho-pass-sv-dev",
+    "prod": "cho-pass-sv-prod"
   }
 }
