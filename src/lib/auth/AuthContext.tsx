@@ -38,6 +38,7 @@ interface AuthContextType {
   isLoading: boolean;
   isWebView: boolean;
   loginWithGoogle: () => Promise<void>;
+  loginWithDemo: (selectedRole?: "verified" | "pending") => void;
   logout: () => Promise<void>;
   refreshClaims: () => Promise<void>;
   errorMessage: string | null;
@@ -51,6 +52,7 @@ const AuthContext = React.createContext<AuthContextType>({
   isLoading: true,
   isWebView: false,
   loginWithGoogle: async () => {},
+  loginWithDemo: () => {},
   logout: async () => {},
   refreshClaims: async () => {},
   errorMessage: null,
@@ -95,6 +97,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setRole("pending");
         }
       } else {
+        // Kiểm tra xem có phiên đăng nhập thử nghiệm (Demo) trong localStorage không
+        if (typeof window !== "undefined") {
+          const savedDemo = localStorage.getItem("demo_auth_user");
+          if (savedDemo) {
+            try {
+              const parsed = JSON.parse(savedDemo);
+              setUser(parsed.demoUser);
+              setProfile(parsed.demoProfile);
+              setRole(parsed.selectedRole);
+              setIsLoading(false);
+              return;
+            } catch {
+              // Bỏ qua lỗi parse
+            }
+          }
+        }
+
         setRole("guest");
         setProfile(null);
       }
@@ -180,14 +199,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         case "auth/user-disabled":
           setErrorMessage("Tài khoản của bạn đã bị khóa. Vui lòng liên hệ hỗ trợ hoặc gửi kháng nghị.");
           break;
+        case "auth/api-key-not-valid":
+        case "auth/invalid-api-key":
+          setErrorMessage("Chưa cấu hình Firebase API Key thật trên Vercel. Bạn vui lòng bấm nút 'Đăng nhập thử nghiệm' bên dưới để trải nghiệm ngay!");
+          break;
         default:
-          setErrorMessage("Không thể đăng nhập Google lúc này. Vui lòng thử lại sau giây lát.");
+          setErrorMessage("Chưa kết nối Firebase Google OAuth thật. Bạn có thể sử dụng nút 'Đăng nhập thử nghiệm' bên dưới để vào trải nghiệm ngay mọi tính năng!");
       }
+    }
+  };
+
+  const loginWithDemo = (selectedRole: "verified" | "pending" = "verified") => {
+    const isVerified = selectedRole === "verified";
+    const demoUser = {
+      uid: isVerified ? "demo-student-verified" : "demo-student-pending",
+      displayName: "Trương Nam Nhân (SV Demo)",
+      email: "nnhanfptdn@gmail.com",
+      photoURL: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80",
+    } as unknown as User;
+
+    const demoProfile: UserProfileData = {
+      uid: demoUser.uid,
+      displayName: "Trương Nam Nhân (SV Demo)",
+      email: "nnhanfptdn@gmail.com",
+      photoURL: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80",
+      verified: isVerified,
+      isAdmin: false,
+      schoolCode: "FPT",
+      schoolName: "Đại học FPT Đà Nẵng",
+      provinceCode: "DANANG",
+      wardCode: "HOAHAI",
+      verificationStatus: isVerified ? "approved" : "pending",
+    };
+
+    setUser(demoUser);
+    setProfile(demoProfile);
+    setRole(selectedRole);
+
+    if (typeof window !== "undefined") {
+      localStorage.setItem("demo_auth_user", JSON.stringify({ demoUser, demoProfile, selectedRole }));
     }
   };
 
   const logout = async () => {
     try {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("demo_auth_user");
+      }
       await signOut(auth);
       setRole("guest");
       setUser(null);
@@ -206,6 +264,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         isWebView,
         loginWithGoogle,
+        loginWithDemo,
         logout,
         refreshClaims,
         errorMessage,

@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { user, role, loginWithGoogle, isWebView, errorMessage, clearError } =
+  const { user, role, loginWithGoogle, loginWithDemo, isWebView, errorMessage, clearError } =
     useAuth();
   const [copied, setCopied] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -130,6 +130,47 @@ export default function LoginPage() {
 
           <p className="text-[11px] text-text-muted leading-relaxed">
             Hệ thống chỉ sử dụng tài khoản Google để xác thực an toàn. Bạn không cần tạo hoặc nhớ thêm mật khẩu.
+          </p>
+        </div>
+
+        {/* ĐĂNG NHẬP TRẢI NGHIỆM NHANH (DEMO MODE) */}
+        <div className="pt-2 border-t border-surface-border space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="h-[1px] bg-surface-border flex-1" />
+            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+              Hoặc dùng thử ngay
+            </span>
+            <div className="h-[1px] bg-surface-border flex-1" />
+          </div>
+
+          <div className="grid grid-cols-1 gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                loginWithDemo("verified");
+                router.push("/");
+              }}
+              className="w-full py-2.5 px-3 rounded-xl bg-primary-light border border-primary/30 text-primary font-bold text-xs hover:bg-primary/20 transition-all flex items-center justify-center gap-2"
+            >
+              <span>🎓</span>
+              <span>Đăng nhập thử (Sinh viên đã duyệt thẻ SV)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                loginWithDemo("pending");
+                router.push("/auth/onboarding");
+              }}
+              className="w-full py-2.5 px-3 rounded-xl bg-surface border border-surface-border text-text-secondary font-medium text-xs hover:bg-surface-muted transition-all flex items-center justify-center gap-2"
+            >
+              <span>📝</span>
+              <span>Đăng nhập thử (Sinh viên mới - Vào xác thực thẻ)</span>
+            </button>
+          </div>
+
+          <p className="text-[10px] text-text-muted">
+            Tài khoản dùng thử giúp bạn và bạn bè test ngay lập tức các chức năng Đăng bài, Chat 1-1, Đặt gạch 24h trên điện thoại.
           </p>
         </div>
 
