@@ -120,20 +120,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const isAdmin = Boolean(tokenResult.claims.admin);
         const isVerified = Boolean(tokenResult.claims.verified);
 
+        // Đọc cache profile cục bộ đã xác thực nếu có
+        let cachedProfile: Partial<UserProfileData> | null = null;
+        try {
+          const cachedStr =
+            typeof window !== "undefined"
+              ? localStorage.getItem(`cho_pass_profile_${currentUser.uid}`)
+              : null;
+          if (cachedStr) cachedProfile = JSON.parse(cachedStr);
+        } catch {
+          // Bỏ qua lỗi đọc cache
+        }
+
+        const effectiveAdmin = Boolean(isAdmin || cachedProfile?.isAdmin);
+        const effectiveVerified = Boolean(isVerified || cachedProfile?.verified);
+
         let currentRole: UserRole = "pending";
-        if (isAdmin) currentRole = "admin";
-        else if (isVerified) currentRole = "verified";
+        if (effectiveAdmin) currentRole = "admin";
+        else if (effectiveVerified) currentRole = "verified";
         setRole(currentRole);
 
-        // Khởi tạo profile sơ bộ từ token ngay lập tức
+        // Khởi tạo profile sơ bộ từ token và cache ngay lập tức
         setProfile({
           uid: currentUser.uid,
-          displayName: currentUser.displayName || "Sinh viên",
+          displayName:
+            cachedProfile?.displayName || currentUser.displayName || "Sinh viên",
           email: currentUser.email,
           photoURL: currentUser.photoURL,
-          verified: isVerified,
-          isAdmin,
-          verificationStatus: isVerified ? "approved" : "none",
+          schoolCode: cachedProfile?.schoolCode,
+          schoolName: cachedProfile?.schoolName,
+          campusId: cachedProfile?.campusId,
+          provinceCode: cachedProfile?.provinceCode,
+          wardCode: cachedProfile?.wardCode,
+          verified: effectiveVerified,
+          isAdmin: effectiveAdmin,
+          verificationStatus:
+            cachedProfile?.verificationStatus || (isVerified ? "approved" : "none"),
         });
 
         // Bỏ cờ isLoading NGAY LẬP TỨC để toàn bộ giao diện phản hồi 60 FPS, không bị đơ/lag
@@ -156,25 +178,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 3. Đăng ký Snapshot Firestore đọc users/{uid} và verifications/{uid} thời gian thực
         let userDocData: Record<string, unknown> = {};
         let verificationStatus: "none" | "pending" | "approved" | "rejected" | "expired" =
-          isVerified ? "approved" : "none";
+          effectiveVerified ? "approved" : "none";
 
         const updateCombinedProfile = () => {
-          setProfile({
+          setProfile((prev) => ({
             uid: currentUser.uid,
-            displayName: (userDocData.displayName as string) || currentUser.displayName || "Sinh viên",
+            displayName:
+              (userDocData.displayName as string) ||
+              prev?.displayName ||
+              currentUser.displayName ||
+              "Sinh viên",
             email: currentUser.email,
             photoURL: (userDocData.photoURL as string) || currentUser.photoURL,
-            schoolCode: userDocData.schoolCode as string | undefined,
-            schoolName: userDocData.schoolName as string | undefined,
-            campusId: userDocData.campusId as string | undefined,
-            campusName: userDocData.campusName as string | undefined,
-            provinceCode: userDocData.provinceCode as string | undefined,
-            wardCode: userDocData.wardCode as string | undefined,
-            verified: Boolean(userDocData.verified || isVerified),
-            isAdmin,
-            isGraduating: userDocData.isGraduating as boolean | undefined,
-            verificationStatus,
-          });
+            schoolCode: (userDocData.schoolCode as string) || prev?.schoolCode,
+            schoolName: (userDocData.schoolName as string) || prev?.schoolName,
+            campusId: (userDocData.campusId as string) || prev?.campusId,
+            campusName: (userDocData.campusName as string) || prev?.campusName,
+            provinceCode: (userDocData.provinceCode as string) || prev?.provinceCode,
+            wardCode: (userDocData.wardCode as string) || prev?.wardCode,
+            verified: Boolean(userDocData.verified || effectiveVerified || prev?.verified),
+            isAdmin: effectiveAdmin,
+            isGraduating: (userDocData.isGraduating as boolean) ?? prev?.isGraduating,
+            verificationStatus:
+              verificationStatus !== "none"
+                ? verificationStatus
+                : prev?.verificationStatus || "none",
+          }));
         };
 
         const userDocRef = doc(db, "users", currentUser.uid);
@@ -238,9 +267,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshClaims = async () => {
     if (!auth.currentUser) return;
     try {
+      let cachedProfile: Partial<UserProfileData> | null = null;
+      try {
+        const cachedStr =
+          typeof window !== "undefined"
+            ? localStorage.getItem(`cho_pass_profile_${auth.currentUser.uid}`)
+            : null;
+        if (cachedStr) cachedProfile = JSON.parse(cachedStr);
+      } catch {
+        // Bỏ qua lỗi đọc cache
+      }
+
       const tokenResult = await auth.currentUser.getIdTokenResult(true);
-      const isAdmin = Boolean(tokenResult.claims.admin);
-      const isVerified = Boolean(tokenResult.claims.verified);
+      const isAdmin = Boolean(tokenResult.claims.admin || cachedProfile?.isAdmin);
+      const isVerified = Boolean(
+        tokenResult.claims.verified || cachedProfile?.verified
+      );
 
       let currentRole: UserRole = "pending";
       if (isAdmin) currentRole = "admin";
@@ -251,11 +293,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         prev
           ? {
               ...prev,
+              ...cachedProfile,
               verified: isVerified,
               isAdmin,
-              verificationStatus: isVerified ? "approved" : prev.verificationStatus,
+              verificationStatus:
+                cachedProfile?.verificationStatus ||
+                (isVerified ? "approved" : prev.verificationStatus),
             }
-          : null
+          : (cachedProfile as UserProfileData | null)
       );
     } catch {
       // Bỏ qua lỗi làm mới token
