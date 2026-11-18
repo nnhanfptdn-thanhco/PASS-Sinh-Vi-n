@@ -128,16 +128,31 @@ function OnboardingContent() {
 
     setIsSubmitting(true);
     try {
-      // 1. Tải ảnh thẻ sinh viên đã nén trực tiếp lên Cloud Storage
+      // 1. Tải ảnh thẻ sinh viên đã nén trực tiếp lên Cloud Storage (có timeout kiểm soát 25s)
       const storagePath = `private/cards/${user.uid}/front.webp`;
       const cardFileRef = ref(storage, storagePath);
-      await uploadBytes(cardFileRef, cardImageBlob, {
+
+      const uploadPromise = uploadBytes(cardFileRef, cardImageBlob, {
         contentType: "image/webp",
         customMetadata: {
           uploadedBy: user.uid,
           uploadedAt: new Date().toISOString(),
         },
       });
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                "Không thể kết nối tới Firebase Storage (Timeout). Vui lòng kiểm tra mục Storage trên Firebase Console!"
+              )
+            ),
+          25000
+        )
+      );
+
+      await Promise.race([uploadPromise, timeoutPromise]);
 
       // 2. Gửi metadata xác thực tới Server Route qua authFetch (không lưu base64 trong Firestore)
       const res = await authFetch("/api/verifications/submit", {
@@ -157,7 +172,17 @@ function OnboardingContent() {
       await refreshClaims();
       setSuccessMessage(true);
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : "Đã xảy ra lỗi khi gửi hồ sơ xác minh";
+      let msg = error instanceof Error ? error.message : "Đã xảy ra lỗi khi gửi hồ sơ xác minh";
+      if (
+        msg.includes("storage") ||
+        msg.includes("bucket") ||
+        msg.includes("404") ||
+        msg.includes("Firebase Storage") ||
+        msg.includes("Timeout")
+      ) {
+        msg =
+          "Chưa kích hoạt Cloud Storage trên Firebase Console! Vui lòng vào Firebase Console > Storage > Bấm 'Bắt đầu' (Get started).";
+      }
       alert(msg);
     } finally {
       setIsSubmitting(false);

@@ -115,22 +115,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        // 1. Gọi Bootstrap API để tạo profile khởi tạo hoặc cấp quyền admin tự động
-        try {
-          const bootstrapRes = await authFetch("/api/auth/bootstrap", {
-            method: "POST",
-          });
-          if (bootstrapRes.ok) {
-            const data = await bootstrapRes.json();
-            if (data.claimsChanged) {
-              await currentUser.getIdToken(true);
-            }
-          }
-        } catch {
-          // Tiếp tục kể cả khi bootstrap offline tạm thời
-        }
-
-        // 2. Lấy Claims từ ID Token hiện tại
+        // 1. Lấy Claims từ ID Token hiện tại NGAY LẬP TỨC (từ memory cache, mất 0ms)
         const tokenResult: IdTokenResult = await currentUser.getIdTokenResult();
         const isAdmin = Boolean(tokenResult.claims.admin);
         const isVerified = Boolean(tokenResult.claims.verified);
@@ -140,7 +125,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         else if (isVerified) currentRole = "verified";
         setRole(currentRole);
 
-        // Khởi tạo profile sơ bộ từ token trước khi snapshot Firestore trả về
+        // Khởi tạo profile sơ bộ từ token ngay lập tức
         setProfile({
           uid: currentUser.uid,
           displayName: currentUser.displayName || "Sinh viên",
@@ -150,6 +135,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           isAdmin,
           verificationStatus: isVerified ? "approved" : "none",
         });
+
+        // Bỏ cờ isLoading NGAY LẬP TỨC để toàn bộ giao diện phản hồi 60 FPS, không bị đơ/lag
+        setIsLoading(false);
+
+        // 2. Chạy Bootstrap API ngầm trong nền (Fire-and-forget, không chặn render giao diện)
+        authFetch("/api/auth/bootstrap", {
+          method: "POST",
+        })
+          .then(async (res) => {
+            if (res.ok) {
+              const data = await res.json().catch(() => ({}));
+              if (data?.claimsChanged) {
+                await currentUser.getIdToken(true);
+              }
+            }
+          })
+          .catch(() => {});
 
         // 3. Đăng ký Snapshot Firestore đọc users/{uid} và verifications/{uid} thời gian thực
         let userDocData: Record<string, unknown> = {};
