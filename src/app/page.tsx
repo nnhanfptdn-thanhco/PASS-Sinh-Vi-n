@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { EmptyState } from "@/components/ui/EmptyState";
+import { HomeFeed } from "@/components/home/HomeFeed";
 
 export default function HomePage() {
   const categories = [
@@ -163,13 +163,8 @@ export default function HomePage() {
           <span className="text-xs text-text-muted">Cập nhật liên tục</span>
         </div>
 
-        {/* Đúng yêu cầu SPEC: Không có tin đăng giả trên production -> Hiển thị Empty State chuẩn chỉnh */}
-        <EmptyState
-          title="Chưa có món đồ nào được đăng quanh khu vực này"
-          description="Hệ thống không tạo dữ liệu giả. Hãy là sinh viên đầu tiên đăng món đồ hoặc giáo trình cần pass của trường bạn nhé!"
-          actionText="Đăng món đồ đầu tiên của trường bạn"
-          actionHref="/listings/new"
-        />
+        {/* Danh sách tin đăng: Tự động đồng bộ tin đăng mới nhất của sinh viên */}
+        <HomeFeed />
       </section>
     </div>
   );

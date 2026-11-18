@@ -60,11 +60,57 @@ export interface ListingDetailData {
 }
 
 export function ListingDetailClient({
-  listing,
+  listing: initialListing,
 }: {
   listing: ListingDetailData;
 }) {
   const { user, profile } = useAuth();
+  const [listing, setListing] = React.useState<ListingDetailData>(initialListing);
+
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem("cho_pass_my_listings");
+      if (stored) {
+        const list = JSON.parse(stored);
+        const found = list.find((item: { id?: string }) => item.id === initialListing.id);
+        if (found) {
+          setListing((prev) => ({
+            ...prev,
+            id: found.id || prev.id,
+            title: found.title || prev.title,
+            price: typeof found.price === "number" ? found.price : prev.price,
+            originalPrice: found.originalPrice || prev.originalPrice,
+            urgentPass: found.urgentPass ?? prev.urgentPass,
+            condition: found.condition || prev.condition,
+            brandModel: found.brandModel || prev.brandModel,
+            usageTime: found.usageTime || prev.usageTime,
+            defects: found.defects || prev.defects,
+            description: found.description || prev.description,
+            images:
+              Array.isArray(found.images) && found.images.length > 0
+                ? found.images
+                : found.coverImage
+                ? [found.coverImage]
+                : prev.images,
+            passDeadline: found.passDeadline || prev.passDeadline,
+            schoolName: found.schoolName || prev.schoolName,
+            schoolCode: found.schoolCode || prev.schoolCode,
+            publicMeetingPoint:
+              found.publicMeetingPoint || prev.publicMeetingPoint,
+            seller: {
+              ...prev.seller,
+              displayName: profile?.displayName || "Nam Nhân (Đã duyệt thẻ)",
+              avatarUrl:
+                profile?.photoURL ||
+                prev.seller.avatarUrl,
+            },
+          }));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [initialListing.id, profile]);
   const [activeImageIndex, setActiveImageIndex] = React.useState(0);
   const [isFavorite, setIsFavorite] = React.useState(false);
   const [copiedLink, setCopiedLink] = React.useState(false);

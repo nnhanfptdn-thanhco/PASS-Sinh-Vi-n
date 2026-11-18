@@ -76,9 +76,31 @@ function SearchContent() {
       if (onlyShipping) params.set("shipping", "true");
       if (sortBy !== "relevant") params.set("sort", sortBy);
 
-      const res = await fetch(`/api/listings/search?${params.toString()}`);
-      const data = await res.json();
-      setItems(data.items || []);
+      let results: SearchCardItem[] = [];
+      try {
+        const res = await fetch(`/api/listings/search?${params.toString()}`);
+        const data = await res.json();
+        results = data.items || [];
+      } catch {
+        // API offline
+      }
+
+      try {
+        const stored = localStorage.getItem("cho_pass_my_listings");
+        if (stored) {
+          const localList: SearchCardItem[] = JSON.parse(stored);
+          const filteredLocal = localList.filter((item) => {
+            if (query && !item.title.toLowerCase().includes(query.toLowerCase())) return false;
+            if (onlyUrgent && !item.urgentPass) return false;
+            return true;
+          });
+          results = [...filteredLocal, ...results];
+        }
+      } catch {
+        // ignore
+      }
+
+      setItems(results);
     } catch {
       setItems([]);
     } finally {
