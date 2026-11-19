@@ -14,12 +14,17 @@ import {
 import { Badge } from "@/components/ui/Badge";
 import { HomeFeed } from "@/components/home/HomeFeed";
 import { HomeSearchBar } from "@/components/home/HomeSearchBar";
-import { searchListings } from "@/lib/services/listings";
+import { searchListings, type SearchListingsResult } from "@/lib/services/listings";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const initialData = await searchListings({ sort: "newest", limit: 12 });
+  let initialData: SearchListingsResult = { items: [] };
+  try {
+    initialData = await searchListings({ sort: "newest", limit: 12 });
+  } catch (err) {
+    console.error("Lỗi khởi tạo HomePage:", err);
+  }
 
   const categories = [
     { name: "Điện máy", icon: Tv, slug: "dien-may" },

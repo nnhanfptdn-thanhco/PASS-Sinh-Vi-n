@@ -392,9 +392,15 @@ export async function searchListings(
     // FAILED_PRECONDITION (code 9) do thiếu composite index
     if (errorCode === 9 || errorMsg.includes("FAILED_PRECONDITION") || errorMsg.includes("requires an index")) {
       console.warn("[SEARCH_INDEX_FALLBACK] Truy vấn thiếu Composite Index trên Firestore, kích hoạt fallback cơ bản:", errorMsg);
-      snapshot = await executeQuery(false);
+      try {
+        snapshot = await executeQuery(false);
+      } catch (fallbackErr) {
+        console.error("[SEARCH_INDEX_FALLBACK_ERROR] Fallback cũng gặp lỗi:", fallbackErr);
+        return { items: [], nextCursor: undefined };
+      }
     } else {
-      throw err;
+      console.error("[SEARCH_LISTINGS_ERROR] Lỗi kết nối Firestore:", errorMsg);
+      return { items: [], nextCursor: undefined };
     }
   }
 
