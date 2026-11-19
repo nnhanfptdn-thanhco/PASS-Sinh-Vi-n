@@ -1,41 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser, errorResponse } from "@/lib/auth/server";
+import { requireAuth } from "@/lib/server/auth-guard";
+import { withApi } from "@/lib/server/http";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { adminAuth, adminDb, FieldValue } from "@/lib/firebase/admin";
 
-// In-memory rate limiting map: uid -> { count: number, resetAt: number }
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-function checkRateLimit(uid: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(uid);
+export const POST = withApi(async (req: NextRequest) => {
+  const auth = await requireAuth(req);
+  const token = auth.token;
+  const uid = auth.uid;
 
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(uid, { count: 1, resetAt: now + 3600 * 1000 });
-    return true;
-  }
+  await consumeRateLimit({
+    scope: "auth_bootstrap",
+    key: uid,
+    limit: 30,
+    windowSec: 3600,
+    customMessage: "Bạn đã gửi quá nhiều yêu cầu xác thực. Vui lòng thử lại sau 1 giờ.",
+  });
 
-  if (entry.count >= 30) {
-    return false;
-  }
-
-  entry.count += 1;
-  return true;
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    const token = await requireUser(req);
-    const uid = token.uid;
-
-    if (!checkRateLimit(uid)) {
-      return NextResponse.json(
-        { error: "Bạn đã gửi quá nhiều yêu cầu xác thực. Vui lòng thử lại sau 1 giờ." },
-        { status: 429 }
-      );
-    }
-
-    const userRef = adminDb.collection("users").doc(uid);
-    const userPrivateRef = adminDb.collection("usersPrivate").doc(uid);
+  const userRef = adminDb.collection("users").doc(uid);
+  const userPrivateRef = adminDb.collection("usersPrivate").doc(uid);
 
     // 1. Transaction: Đảm bảo tạo mới hoặc cập nhật thông tin an toàn
     await adminDb.runTransaction(async (transaction) => {
@@ -142,7 +128,4 @@ export async function POST(req: NextRequest) {
       ok: true,
       claimsChanged,
     });
-  } catch (error) {
-    return errorResponse(error);
-  }
-}
+});

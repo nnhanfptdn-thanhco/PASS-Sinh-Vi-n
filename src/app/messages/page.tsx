@@ -1,14 +1,17 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { formatCurrencyVND } from "@/lib/utils";
 import {
   Send,
-  Image as ImageIcon,
   MessageSquare,
+  ShieldAlert,
+  ArrowLeft,
+  GraduationCap,
 } from "lucide-react";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -16,15 +19,15 @@ import Image from "next/image";
 
 interface ConversationItem {
   id: string;
-  listingId: string;
-  listingTitle: string;
-  listingPrice: number;
-  listingImage: string;
+  listingId?: string;
+  listingTitle?: string;
+  listingPrice?: number;
+  listingCoverImage?: string;
   partnerName: string;
-  partnerAvatar: string;
-  lastMessage: string;
-  lastMessageTime: string;
-  unreadCount: number;
+  partnerAvatar?: string;
+  lastMessage?: string;
+  lastMessageTime?: string;
+  unreadCount?: number;
 }
 
 interface ChatMessage {
@@ -36,27 +39,72 @@ interface ChatMessage {
 }
 
 export default function MessagesPage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [conversations, setConversations] = React.useState<ConversationItem[]>([]);
   const [activeChat, setActiveChat] = React.useState<ConversationItem | null>(null);
   const [chatMessages, setChatMessages] = React.useState<ChatMessage[]>([]);
   const [inputText, setInputText] = React.useState("");
 
+  // Tải danh sách hội thoại ban đầu
+  React.useEffect(() => {
+    // Không dùng localStorage giả lập tin nhắn
+    setConversations([]);
+  }, []);
+
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim() || !activeChat) return;
+    const trimmed = inputText.trim();
+    if (!trimmed || !activeChat) return;
+
+    if (trimmed.length > 1000) {
+      alert("Tin nhắn tối đa 1000 ký tự.");
+      return;
+    }
 
     const newMsg: ChatMessage = {
       id: `m_${Date.now()}`,
       senderId: user?.uid || "me",
-      text: inputText.trim(),
+      text: trimmed,
       timestamp: "Vừa xong",
       isMe: true,
     };
 
     setChatMessages((prev) => [...prev, newMsg]);
     setInputText("");
+
+    // Cập nhật lastMessage
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === activeChat.id ? { ...c, lastMessage: trimmed, lastMessageTime: "Vừa xong" } : c
+      )
+    );
   };
+
+  // Người dùng chưa verified thấy hộp thoại dẫn tới onboarding
+  if (profile && !profile.verified) {
+    return (
+      <RequireAuth>
+        <div className="max-w-md mx-auto px-4 py-16 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-amber-500/10 text-amber-500 mx-auto flex items-center justify-center">
+            <GraduationCap className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold font-heading text-text-main">
+            Cần Xác Minh Thẻ Sinh Viên
+          </h2>
+          <p className="text-sm text-text-secondary">
+            Để bảo vệ cộng đồng sinh viên khỏi spam và lừa đảo cọc, tính năng nhắn tin chỉ mở cho sinh viên đã được duyệt thẻ.
+          </p>
+          <div className="pt-2">
+            <Link href="/auth/onboarding">
+              <Button variant="primary" size="md" className="w-full">
+                Gửi Hồ Sơ Xác Minh Ngay
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </RequireAuth>
+    );
+  }
 
   return (
     <RequireAuth>
@@ -98,121 +146,142 @@ export default function MessagesPage() {
                     }`}
                   >
                     <div className="relative w-11 h-11 rounded-full overflow-hidden bg-primary-light shrink-0">
-                      <Image
-                        src={conv.partnerAvatar}
-                        alt={conv.partnerName}
-                        width={44}
-                        height={44}
-                        className="w-full h-full object-cover"
-                      />
+                      {conv.partnerAvatar ? (
+                        <Image
+                          src={conv.partnerAvatar}
+                          alt={conv.partnerName}
+                          fill
+                          className="object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center font-bold text-primary text-sm">
+                          {conv.partnerName.slice(0, 1)}
+                        </div>
+                      )}
                     </div>
-
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1 mb-0.5">
-                        <span className="font-bold text-xs text-text-main truncate">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-bold text-text-main truncate">
                           {conv.partnerName}
-                        </span>
-                        <span className="text-[10px] text-text-muted shrink-0">
-                          {conv.lastMessageTime}
+                        </h4>
+                        <span className="text-[10px] text-text-muted">
+                          {conv.lastMessageTime || "Gần đây"}
                         </span>
                       </div>
-                      <p className="text-xs text-text-secondary truncate">
-                        {conv.lastMessage}
+                      {conv.listingTitle && (
+                        <p className="text-[11px] text-primary truncate mt-0.5">
+                          {conv.listingTitle}
+                        </p>
+                      )}
+                      <p className="text-xs text-text-secondary truncate mt-0.5">
+                        {conv.lastMessage || "Bắt đầu cuộc trò chuyện..."}
                       </p>
                     </div>
-
-                    {conv.unreadCount > 0 && (
-                      <span className="w-4 h-4 rounded-full bg-primary text-white text-[10px] font-bold flex items-center justify-center shrink-0">
-                        {conv.unreadCount}
-                      </span>
-                    )}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* CỘT NỘI DUNG CHAT BÊN PHẢI */}
-            {activeChat ? (
-              <div className="flex-1 flex flex-col h-full bg-surface-muted/20">
-                {/* Header người chat & món đồ */}
-                <div className="p-3.5 px-4 bg-surface border-b border-surface-border flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-9 h-9 rounded-full overflow-hidden bg-primary-light shrink-0">
-                      <Image
-                        src={activeChat.partnerAvatar}
-                        alt={activeChat.partnerName}
-                        width={36}
-                        height={36}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <div className="truncate">
-                      <h3 className="font-bold text-xs sm:text-sm text-text-main truncate">
-                        {activeChat.partnerName}
-                      </h3>
-                      <p className="text-[11px] text-text-muted truncate">
-                        Quan tâm: {activeChat.listingTitle} ({formatCurrencyVND(activeChat.listingPrice)})
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Danh sách tin nhắn */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                  {chatMessages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={`flex flex-col ${msg.isMe ? "items-end" : "items-start"}`}
-                    >
-                      <div
-                        className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-xs sm:text-sm ${
-                          msg.isMe
-                            ? "bg-primary text-white rounded-br-xs shadow-subtle"
-                            : "bg-surface border border-surface-border text-text-main rounded-bl-xs shadow-subtle"
-                        }`}
+            {/* KHUNG NỘI DUNG CHAT BÊN PHẢI */}
+            <div className="flex-1 flex flex-col min-w-0 bg-surface">
+              {activeChat ? (
+                <>
+                  {/* Header cuộc trò chuyện */}
+                  <div className="p-3.5 border-b border-surface-border flex items-center justify-between gap-3 bg-surface-muted/30">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => setActiveChat(null)}
+                        className="md:hidden p-1 text-text-secondary hover:text-text-main"
                       >
-                        {msg.text}
+                        <ArrowLeft className="w-5 h-5" />
+                      </button>
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-bold text-text-main truncate">
+                          {activeChat.partnerName}
+                        </h3>
+                        {activeChat.listingTitle && (
+                          <p className="text-xs text-text-secondary truncate">
+                            Món đồ: {activeChat.listingTitle} ·{" "}
+                            {formatCurrencyVND(activeChat.listingPrice || 0)}
+                          </p>
+                        )}
                       </div>
-                      <span className="text-[10px] text-text-muted mt-1 px-1">
-                        {msg.timestamp}
-                      </span>
                     </div>
-                  ))}
-                </div>
+                    <Badge variant="verified">Đã duyệt thẻ SV</Badge>
+                  </div>
 
-                {/* Khung nhập tin nhắn */}
-                <form
-                  onSubmit={handleSendMessage}
-                  className="p-3 bg-surface border-t border-surface-border flex items-center gap-2"
-                >
-                  <button
-                    type="button"
-                    title="Gửi ảnh món đồ"
-                    className="p-2 text-text-muted hover:text-primary transition-colors"
+                  {/* Banner an toàn cố định đầu khung chat */}
+                  <div className="bg-amber-500/10 border-b border-amber-500/20 px-3.5 py-2 flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+                    <ShieldAlert className="w-4 h-4 shrink-0" />
+                    <span>
+                      <strong>Cảnh báo an toàn:</strong> Không chuyển khoản đặt cọc trước. Luôn hẹn gặp ở nơi công cộng như cổng trường, thư viện hoặc KTX.
+                    </span>
+                  </div>
+
+                  {/* Vùng tin nhắn */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {chatMessages.length === 0 ? (
+                      <div className="text-center py-12 text-xs text-text-muted">
+                        Chưa có tin nhắn nào. Hãy gửi lời chào hoặc hẹn địa điểm xem đồ!
+                      </div>
+                    ) : (
+                      chatMessages.map((msg) => (
+                        <div
+                          key={msg.id}
+                          className={`flex ${msg.isMe ? "justify-end" : "justify-start"}`}
+                        >
+                          <div
+                            className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-xs ${
+                              msg.isMe
+                                ? "bg-primary text-white rounded-br-none"
+                                : "bg-surface-muted text-text-main border border-surface-border rounded-bl-none"
+                            }`}
+                          >
+                            <p className="whitespace-pre-wrap break-words">{msg.text}</p>
+                            <span
+                              className={`text-[9px] block text-right mt-1 ${
+                                msg.isMe ? "text-white/70" : "text-text-muted"
+                              }`}
+                            >
+                              {msg.timestamp}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Vùng nhập tin nhắn */}
+                  <form
+                    onSubmit={handleSendMessage}
+                    className="p-3 border-t border-surface-border flex items-center gap-2 bg-surface"
                   >
-                    <ImageIcon className="w-5 h-5" />
-                  </button>
-                  <input
-                    type="text"
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    placeholder="Nhập tin nhắn hẹn giờ gặp, hỏi thêm chi tiết..."
-                    className="flex-1 h-11 px-3.5 bg-surface-muted/40 border border-surface-border rounded-xl text-xs sm:text-sm text-text-main placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    className="h-11 px-4 rounded-xl shrink-0"
-                  >
-                    <Send className="w-4 h-4" />
-                  </Button>
-                </form>
-              </div>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-text-muted text-xs">
-                Chọn một cuộc trò chuyện để bắt đầu nhắn tin
-              </div>
-            )}
+                    <input
+                      type="text"
+                      value={inputText}
+                      onChange={(e) => setInputText(e.target.value)}
+                      placeholder="Nhập tin nhắn (hẹn xem đồ, địa điểm...)"
+                      maxLength={1000}
+                      className="flex-1 bg-surface-muted border border-surface-border rounded-xl px-3.5 py-2 text-xs text-text-main placeholder:text-text-muted focus:outline-none focus:border-primary"
+                    />
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      size="sm"
+                      disabled={!inputText.trim()}
+                      className="rounded-xl shrink-0"
+                    >
+                      <Send className="w-4 h-4" />
+                    </Button>
+                  </form>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-xs text-text-muted">
+                  Chọn một cuộc trò chuyện để bắt đầu
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

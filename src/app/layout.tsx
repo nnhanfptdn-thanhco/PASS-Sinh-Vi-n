@@ -4,6 +4,7 @@ import "./globals.css";
 import { Header } from "@/components/navigation/Header";
 import { MobileBottomNav } from "@/components/navigation/MobileBottomNav";
 import { AuthProvider } from "@/lib/auth/AuthContext";
+import { LegacyStorageCleanup } from "@/components/common/LegacyStorageCleanup";
 
 const beVietnamPro = Be_Vietnam_Pro({
   subsets: ["latin", "vietnamese"],
@@ -19,17 +20,26 @@ const plusJakartaSans = Plus_Jakarta_Sans({
   display: "swap",
 });
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000");
+
 export const metadata: Metadata = {
-  title: "Chợ Pass Sinh Viên - Chợ đồ cũ sinh viên toàn quốc",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: "Chợ Pass Sinh Viên - Chợ đồ cũ sinh viên toàn quốc",
+    template: "%s | Chợ Pass Sinh Viên",
+  },
   description:
-    "Nền tảng mua bán và pass đồ cũ uy tín dành riêng cho sinh viên Việt Nam: quạt, nồi cơm, bàn học, giáo trình, xe cộ. Đã xác minh thẻ sinh viên 100%.",
-  keywords: [
-    "chợ pass sinh viên",
-    "pass đồ sinh viên",
-    "đồ cũ sinh viên",
-    "giáo trình cũ",
-    "quạt nồi cơm sinh viên",
-  ],
+    "Nền tảng mua bán và pass đồ cũ dành riêng cho sinh viên Việt Nam: quạt, nồi cơm, bàn học, giáo trình, xe cộ. Người đăng tin là sinh viên đã xác thực.",
+  openGraph: {
+    siteName: "Chợ Pass Sinh Viên",
+    locale: "vi_VN",
+    type: "website",
+    title: "Chợ Pass Sinh Viên - Chợ đồ cũ sinh viên toàn quốc",
+    description: "Nền tảng mua bán và pass đồ cũ dành riêng cho sinh viên Việt Nam.",
+  },
+  twitter: {
+    card: "summary_large_image",
+  },
 };
 
 export const viewport: Viewport = {
@@ -50,6 +60,7 @@ export default function RootLayout({
         className={`${beVietnamPro.variable} ${plusJakartaSans.variable} min-h-screen bg-background text-text-main flex flex-col font-body antialiased`}
       >
         <AuthProvider>
+          <LegacyStorageCleanup />
           <Header />
           <main className="flex-1 pb-20 md:pb-8">{children}</main>
           <MobileBottomNav />

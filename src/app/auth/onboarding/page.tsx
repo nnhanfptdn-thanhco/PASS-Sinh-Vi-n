@@ -28,7 +28,7 @@ import wardsData from "../../../../data/communes_wards.json";
 
 function OnboardingContent() {
   const router = useRouter();
-  const { user, refreshClaims } = useAuth();
+  const { user } = useAuth();
 
   const [step, setStep] = React.useState<1 | 2 | 3>(1);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -60,6 +60,7 @@ function OnboardingContent() {
   const [cardImageBlob, setCardImageBlob] = React.useState<Blob | null>(null);
   const [qualityCheck, setQualityCheck] = React.useState<ImageQualityCheck | null>(null);
   const [consentCardPrivacy, setConsentCardPrivacy] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Tự gợi ý tỉnh/phường khi chọn trường
@@ -117,12 +118,13 @@ function OnboardingContent() {
   };
 
   const handleSubmitVerification = async () => {
+    setSubmitError(null);
     if (!user) {
-      alert("Vui lòng đăng nhập trước khi gửi hồ sơ xác minh.");
+      setSubmitError("Vui lòng đăng nhập trước khi gửi hồ sơ xác minh.");
       return;
     }
     if (!cardImageBlob || !formData.studentId || !formData.zaloPhone) {
-      alert("Vui lòng điền đầy đủ các mục bắt buộc và tải ảnh thẻ.");
+      setSubmitError("Vui lòng điền đầy đủ các mục bắt buộc và tải ảnh thẻ.");
       return;
     }
 
@@ -130,68 +132,42 @@ function OnboardingContent() {
     try {
       const storagePath = `private/cards/${user.uid}/front.webp`;
 
-      // 1. Thử tải ảnh lên Cloud Storage nếu dịch vụ đã bật (timeout 3 giây để không làm treo giao diện)
+      // 1. Tải ảnh lên Cloud Storage (bắt buộc thành công, không giả vờ thành công)
       try {
         const cardFileRef = ref(storage, storagePath);
-        const uploadPromise = uploadBytes(cardFileRef, cardImageBlob, {
+        await uploadBytes(cardFileRef, cardImageBlob, {
           contentType: "image/webp",
           customMetadata: {
             uploadedBy: user.uid,
             uploadedAt: new Date().toISOString(),
           },
         });
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Timeout")), 3000)
-        );
-        await Promise.race([uploadPromise, timeoutPromise]);
-      } catch {
-        console.warn("Storage chưa kích hoạt, tiếp tục quy trình tự động duyệt.");
+      } catch (uploadErr) {
+        console.error("Lỗi upload ảnh thẻ:", uploadErr);
+        throw new Error("Không thể tải ảnh thẻ lên hệ thống lưu trữ. Vui lòng kiểm tra kết nối mạng và thử lại.");
       }
 
-      // 2. Thử gửi metadata tới server route
-      try {
-        await authFetch("/api/verifications/submit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...formData,
-            cardStoragePath: storagePath,
-          }),
-        });
-      } catch {
-        console.warn("Server API offline, lưu xác thực vào profile cục bộ.");
+      // 2. Gửi metadata tới server route
+      const res = await authFetch("/api/verifications/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...formData,
+          cardStoragePath: storagePath,
+        }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error?.message || errJson.error || "Không thể gửi hồ sơ xác minh tới máy chủ.");
       }
 
-      // 3. Tự động xác thực thẻ sinh viên thành công cho tài khoản
-      const selectedSchool = universitiesData.find((s) => s.code === formData.schoolCode);
-      const verifiedProfile = {
-        uid: user.uid,
-        displayName: formData.displayName || user.displayName || "Sinh viên",
-        email: user.email,
-        photoURL: user.photoURL,
-        schoolCode: formData.schoolCode,
-        schoolName: selectedSchool?.name || "Trường Đại học FPT",
-        campusId: formData.campusId || "c1",
-        provinceCode: formData.provinceCode,
-        wardCode: formData.wardCode,
-        verified: true,
-        isAdmin: false,
-        verificationStatus: "approved" as const,
-        isGraduating: formData.isGraduating,
-      };
-
-      if (typeof window !== "undefined") {
-        localStorage.setItem(
-          `cho_pass_profile_${user.uid}`,
-          JSON.stringify(verifiedProfile)
-        );
-      }
-
-      await refreshClaims();
+      // 3. KHÔNG tự động gán verified giả vào localStorage!
+      // Hồ sơ hiện ở trạng thái chờ duyệt (pending) bởi quản trị viên.
       setSuccessMessage(true);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : "Đã xảy ra lỗi khi gửi hồ sơ xác minh";
-      alert(msg);
+      setSubmitError(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -511,6 +487,13 @@ function OnboardingContent() {
               <span>Tôi là sinh viên năm cuối / Sắp tốt nghiệp ra trường</span>
             </label>
 
+            {submitError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 dark:bg-red-950/60 dark:text-red-300 dark:border-red-800 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-red-500" />
+                <span>{submitError}</span>
+              </div>
+            )}
+
             <div className="flex justify-between pt-4">
               <Button
                 variant="secondary"
@@ -628,6 +611,13 @@ function OnboardingContent() {
                 Tôi xác nhận ảnh thẻ sinh viên là của chính tôi và đồng ý để quản trị viên đối chiếu với thông tin đã nhập.
               </span>
             </label>
+
+            {submitError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 dark:bg-red-950/60 dark:text-red-300 dark:border-red-800 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-red-500" />
+                <span>{submitError}</span>
+              </div>
+            )}
 
             <div className="flex justify-between pt-4">
               <Button

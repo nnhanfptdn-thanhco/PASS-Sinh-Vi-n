@@ -1,92 +1,253 @@
+import "server-only";
 import { NextRequest, NextResponse } from "next/server";
-import { requireVerified, errorResponse } from "@/lib/auth/server";
+import { requireApprovedStudent } from "@/lib/auth/server";
+import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
 import { z } from "zod";
+import { MAX_ACTIVE_LISTINGS_PER_SELLER } from "@/lib/constants/listing";
+import { todayVN, addDaysVN, isPastDeadline } from "@/lib/utils/date";
+import {
+  validateManageListingAction,
+  ListingStatus,
+  ManageAction,
+} from "@/lib/domain/listing-status";
 
-const manageListingSchema = z.object({
-  listingId: z.string().min(1, "Thiếu listingId"),
-  action: z.enum(["change_status", "renew"]),
-  newStatus: z.enum(["active", "hidden_by_seller", "sold"]).optional(),
-});
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest) {
-  try {
-    const token = await requireVerified(req);
-    const sellerId = token.uid;
+const manageListingSchema = z
+  .object({
+    listingId: z.string().min(1, "Thiếu listingId"),
+    action: z.enum(["hide", "show", "mark_sold", "renew"]),
+  })
+  .strict();
 
-    const body = await req.json();
-    const parsed = manageListingSchema.safeParse(body);
+export const POST = withApi(async (req: NextRequest) => {
+  const { token } = await requireApprovedStudent(req);
+  const callerUid = token.uid;
+  const isAdmin = token.admin === true || token.role === "admin";
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.issues.map((i) => i.message).join(", ") },
-        { status: 400 }
+  const body = await readJson(req);
+  const { listingId, action } = manageListingSchema.parse(body);
+
+  const listingRef = adminDb.collection("listings").doc(listingId);
+  const privateRef = adminDb.collection("listingsPrivate").doc(listingId);
+
+  const result = await adminDb.runTransaction(async (transaction) => {
+    // 1. Đọc tin đăng
+    const listingSnap = await transaction.get(listingRef);
+    if (!listingSnap.exists) {
+      throw new ApiError(404, "LISTING_NOT_FOUND", "Tin đăng không tồn tại.");
+    }
+
+    const listingData = listingSnap.data() as Record<string, unknown>;
+    const sellerId = listingData.sellerId as string;
+    const currentStatus = (listingData.status as ListingStatus) || "active";
+    const passDeadline = (listingData.passDeadline as string) || "";
+
+    // 2. Kiểm tra quyền sở hữu
+    if (sellerId !== callerUid && !isAdmin) {
+      throw new ApiError(403, "FORBIDDEN", "Bạn không có quyền quản lý tin đăng này.");
+    }
+
+    // 3. Kiểm tra tính hợp lệ của chuyển đổi trạng thái theo Bảng 2.3
+    const validation = validateManageListingAction(action as ManageAction, {
+      currentStatus,
+      passDeadline,
+      now: new Date(),
+      isAdmin,
+    });
+
+    if (!validation.valid) {
+      throw new ApiError(
+        validation.statusCode || 409,
+        "INVALID_TRANSITION",
+        validation.error || "Không thể thực hiện hành động này."
       );
     }
 
-    const { listingId, action, newStatus } = parsed.data;
-
-    const listingRef = adminDb.collection("listings").doc(listingId);
-    const snap = await listingRef.get();
-
-    if (!snap.exists) {
-      return NextResponse.json({ error: "Tin đăng không tồn tại" }, { status: 404 });
-    }
-
-    const data = snap.data();
-    if (data?.sellerId !== sellerId && token.admin !== true) {
-      return NextResponse.json(
-        { error: "Bạn không có quyền chỉnh sửa tin đăng này" },
-        { status: 403 }
+    // 4. Thực thi từng hành động
+    if (action === "show") {
+      // Đếm số slot đang chiếm
+      const activeSnap = await transaction.get(
+        adminDb
+          .collection("listings")
+          .where("sellerId", "==", sellerId)
+          .where("status", "in", ["active", "reserved"])
       );
-    }
 
-    // Không cho phép người bán tự mở lại tin nếu bị Admin ẩn do vi phạm
-    if (data?.status === "hidden_by_admin") {
-      return NextResponse.json(
-        {
-          error:
-            "Tin đăng này đã bị Quản trị viên ẩn do vi phạm quy định. Vui lòng gửi kháng nghị tại mục Hỗ trợ để được xem xét lại.",
-        },
-        { status: 403 }
-      );
-    }
-
-    if (action === "change_status") {
-      if (!newStatus) {
-        return NextResponse.json(
-          { error: "Vui lòng chọn trạng thái mới hợp lệ" },
-          { status: 400 }
+      if (activeSnap.size >= MAX_ACTIVE_LISTINGS_PER_SELLER) {
+        throw new ApiError(
+          429,
+          "SLOT_LIMIT_REACHED",
+          `Bạn đã đạt giới hạn tối đa ${MAX_ACTIVE_LISTINGS_PER_SELLER} tin đang hiển thị và giữ chỗ.`
         );
       }
 
-      await listingRef.update({
-        status: newStatus,
+      transaction.update(listingRef, {
+        status: "active",
         updatedAt: FieldValue.serverTimestamp(),
       });
-      return NextResponse.json({ success: true, message: "Đã cập nhật trạng thái tin" });
+
+      return {
+        status: "active",
+        message: "Đã hiển thị lại tin đăng thành công!",
+      };
+    }
+
+    if (action === "hide") {
+      // Đọc các giữ chỗ đang chờ để hủy
+      const pendingResSnap = await transaction.get(
+        adminDb
+          .collection("reservations")
+          .where("listingId", "==", listingId)
+          .where("status", "in", ["pending", "waitlisted"])
+      );
+
+      transaction.update(listingRef, {
+        status: "hidden_by_seller",
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      // Hủy mọi giữ chỗ pending/waitlisted và thông báo cho người mua
+      pendingResSnap.forEach((doc) => {
+        const resData = doc.data();
+        transaction.update(doc.ref, {
+          status: "cancelled",
+          cancelledBy: "seller",
+          cancelReason: "Người bán đã tạm ẩn tin đăng",
+          cancelledAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        const notifRef = adminDb.collection("notifications").doc();
+        transaction.set(notifRef, {
+          userId: resData.buyerId,
+          title: "Giữ chỗ đã bị hủy",
+          body: "Người bán đã tạm ẩn món đồ bạn đang đặt giữ chỗ.",
+          type: "reservation_cancelled",
+          targetId: listingId,
+          read: false,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      });
+
+      return {
+        status: "hidden_by_seller",
+        message: "Đã tạm ẩn tin đăng thành công.",
+      };
+    }
+
+    if (action === "mark_sold") {
+      // Đọc tất cả giữ chỗ còn mở của tin
+      const openResSnap = await transaction.get(
+        adminDb
+          .collection("reservations")
+          .where("listingId", "==", listingId)
+          .where("status", "in", ["pending", "waitlisted", "confirmed"])
+      );
+
+      transaction.update(listingRef, {
+        status: "sold",
+        soldAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      // Xóa thông tin người mua xác nhận trong listingsPrivate nếu có
+      transaction.set(
+        privateRef,
+        { confirmedBuyerId: FieldValue.delete() },
+        { merge: true }
+      );
+
+      // Hủy tất cả giữ chỗ đang mở
+      openResSnap.forEach((doc) => {
+        const resData = doc.data();
+        transaction.update(doc.ref, {
+          status: "cancelled",
+          cancelledBy: "seller",
+          cancelReason: "Người bán đã bán món đồ này",
+          cancelledAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        const notifRef = adminDb.collection("notifications").doc();
+        transaction.set(notifRef, {
+          userId: resData.buyerId,
+          title: "Tin đăng đã được bán",
+          body: "Món đồ bạn đang quan tâm đã được người bán đánh dấu đã bán.",
+          type: "reservation_cancelled",
+          targetId: listingId,
+          read: false,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      });
+
+      // Tăng số lượng completedDealsCount của người bán (nguyên tử)
+      const userRef = adminDb.collection("users").doc(sellerId);
+      transaction.set(
+        userRef,
+        {
+          completedDealsCount: FieldValue.increment(1),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      return {
+        status: "sold",
+        message: "Đã đánh dấu bán thành công! Tin đăng sẽ ẩn khỏi mọi nơi công khai.",
+      };
     }
 
     if (action === "renew") {
-      // Gia hạn tin thêm 7 ngày
-      const now = new Date();
-      const newDeadline = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-      const deadlineStr = newDeadline.toISOString().split("T")[0];
+      const today = todayVN();
+      const isExpired = currentStatus === "expired" || isPastDeadline(passDeadline);
 
-      await listingRef.update({
-        passDeadline: deadlineStr,
-        status: "active",
-        renewedAt: FieldValue.serverTimestamp(),
+      if (isExpired) {
+        // Kiểm tra số slot nếu chuyển từ expired -> active
+        const activeSnap = await transaction.get(
+          adminDb
+            .collection("listings")
+            .where("sellerId", "==", sellerId)
+            .where("status", "in", ["active", "reserved"])
+        );
+
+        if (activeSnap.size >= MAX_ACTIVE_LISTINGS_PER_SELLER) {
+          throw new ApiError(
+            429,
+            "SLOT_LIMIT_REACHED",
+            `Bạn đã đạt giới hạn tối đa ${MAX_ACTIVE_LISTINGS_PER_SELLER} tin đang hiển thị và giữ chỗ.`
+          );
+        }
+      }
+
+      const calculatedDeadline = addDaysVN(today, 7);
+      const maxDeadline = addDaysVN(today, 30);
+      const newDeadline =
+        calculatedDeadline > maxDeadline ? maxDeadline : calculatedDeadline;
+
+      const newStatus = isExpired ? "active" : currentStatus;
+
+      transaction.update(listingRef, {
+        passDeadline: newDeadline,
+        status: newStatus,
         updatedAt: FieldValue.serverTimestamp(),
+        renewedAt: FieldValue.serverTimestamp(),
       });
-      return NextResponse.json({
-        success: true,
-        message: `Đã gia hạn tin thành công đến ngày ${deadlineStr}`,
-      });
+
+      return {
+        status: newStatus,
+        passDeadline: newDeadline,
+        message: `Đã gia hạn tin đăng đến ${newDeadline} thành công!`,
+      };
     }
 
-    return NextResponse.json({ error: "Hành động không hợp lệ" }, { status: 400 });
-  } catch (err) {
-    return errorResponse(err);
-  }
-}
+    throw new ApiError(400, "INVALID_ACTION", "Hành động không hợp lệ.");
+  });
+
+  return NextResponse.json({
+    success: true,
+    ...result,
+  });
+});

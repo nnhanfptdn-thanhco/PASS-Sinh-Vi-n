@@ -3,6 +3,7 @@ import Link from "next/link";
 import { formatCurrencyVND } from "@/lib/utils";
 import { Badge } from "@/components/ui/Badge";
 import { Clock, Heart } from "lucide-react";
+import { authFetch } from "@/lib/firebase/client";
 
 export interface ListingCardProps {
   id: string;
@@ -37,6 +38,35 @@ export function ListingCard({
   isFavorite = false,
   onToggleFavorite,
 }: ListingCardProps) {
+  const [favorite, setFavorite] = React.useState(isFavorite);
+
+  React.useEffect(() => {
+    setFavorite(isFavorite);
+  }, [isFavorite]);
+
+  const handleFavoriteClick = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onToggleFavorite) {
+      onToggleFavorite(id);
+      return;
+    }
+    const nextVal = !favorite;
+    setFavorite(nextVal);
+    try {
+      const res = await authFetch("/api/favorites/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ listingId: id }),
+      });
+      if (!res.ok) {
+        setFavorite(!nextVal);
+      }
+    } catch {
+      setFavorite(!nextVal);
+    }
+  };
+
   const proximityLabels = {
     sameSchool: "Cùng trường",
     sameWard: "Cùng phường/xã",
@@ -52,7 +82,7 @@ export function ListingCard({
   return (
     <div className="group relative flex flex-col bg-surface border border-surface-border rounded-xl overflow-hidden hover:shadow-card hover:border-primary/40 transition-all duration-200">
       {/* Khung ảnh tỉ lệ 4:3 theo SPEC */}
-      <div className="relative aspect-[4/3] w-full bg-surface-muted overflow-hidden">
+      <Link href={`/listings/${id}`} className="relative aspect-[4/3] w-full bg-surface-muted overflow-hidden block">
         {imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -70,17 +100,13 @@ export function ListingCard({
         {/* Nút lưu yêu thích */}
         <button
           type="button"
-          aria-label={isFavorite ? "Bỏ lưu tin" : "Lưu tin"}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onToggleFavorite?.(id);
-          }}
-          className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white hover:bg-black/60 transition-colors"
+          aria-label={favorite ? "Bỏ lưu tin" : "Lưu tin"}
+          onClick={handleFavoriteClick}
+          className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white hover:bg-black/60 transition-colors z-10"
         >
           <Heart
             className={`w-4 h-4 ${
-              isFavorite ? "fill-red-500 text-red-500" : "text-white"
+              favorite ? "fill-red-500 text-red-500" : "text-white"
             }`}
           />
         </button>
@@ -99,7 +125,7 @@ export function ListingCard({
             {condition}
           </div>
         )}
-      </div>
+      </Link>
 
       {/* Phần thông tin chi tiết - chiều cao cố định để không vỡ lưới */}
       <div className="p-3.5 flex flex-col flex-1 justify-between gap-2.5">

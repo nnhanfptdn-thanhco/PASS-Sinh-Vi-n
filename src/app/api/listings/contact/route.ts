@@ -1,114 +1,144 @@
+import "server-only";
 import { NextRequest, NextResponse } from "next/server";
-import { requireVerified, errorResponse } from "@/lib/auth/server";
+import { requireApprovedStudent } from "@/lib/auth/server";
+import { readJson, withApi, ApiError } from "@/lib/server/http";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
+import { contactRequestSchema } from "@/lib/server/schemas";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
-import { z } from "zod";
+import { isPastDeadline } from "@/lib/utils/date";
 
-const MAX_CONTACT_VIEWS_PER_HOUR = 10;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const contactRequestSchema = z.object({
-  listingId: z.string().min(1, "Thiếu listingId"),
-});
+export const POST = withApi(async (req: NextRequest) => {
+  // 1. Xác thực sinh viên đã duyệt thẻ (hoặc admin)
+  const { token } = await requireApprovedStudent(req);
+  const viewerId = token.uid;
+  const isAdmin = token.admin === true || token.role === "admin";
 
-export async function POST(req: NextRequest) {
-  try {
-    const token = await requireVerified(req);
-    const buyerId = token.uid;
+  // 2. Đọc payload
+  const body = await readJson(req);
+  const { listingId } = contactRequestSchema.parse(body);
 
-    const body = await req.json();
-    const parsed = contactRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.issues.map((i) => i.message).join(", ") },
-        { status: 400 }
+  const logDocId = `${viewerId}_${listingId}`;
+  const logRef = adminDb.collection("contactViewLogs").doc(logDocId);
+
+  // 3. Kiểm tra xem đã từng xem liên hệ của tin này chưa
+  const existingLogSnap = await logRef.get();
+  const alreadyViewed = existingLogSnap.exists;
+
+  // Nếu chưa từng xem tin này -> Tiêu thụ quota 10 lượt/giờ
+  if (!alreadyViewed && !isAdmin) {
+    await consumeRateLimit({
+      scope: "contact_view",
+      key: viewerId,
+      limit: 10,
+      windowSec: 3600,
+      customMessage:
+        "Bạn đã xem liên hệ 10 tin trong 1 giờ qua. Vui lòng quay lại sau nhằm bảo vệ quyền riêng tư của sinh viên.",
+    });
+  }
+
+  // 4. Kiểm tra tin đăng và quyền xem
+  const listingSnap = await adminDb.collection("listings").doc(listingId).get();
+  if (!listingSnap.exists) {
+    throw new ApiError(404, "LISTING_NOT_FOUND", "Không tìm thấy thông tin món đồ.");
+  }
+
+  const listing = listingSnap.data() || {};
+  const sellerId = listing.sellerId as string;
+  const listingStatus = (listing.status as string) || "active";
+  const passDeadline = (listing.passDeadline as string) || "";
+  const isOverdue = isPastDeadline(passDeadline);
+
+  // Không cho tự xem chính mình
+  if (sellerId === viewerId) {
+    throw new ApiError(400, "CANNOT_VIEW_SELF", "Bạn là người bán của món đồ này.");
+  }
+
+  // Tin đã bán, ẩn, hoặc hết hạn -> 404
+  if (
+    listingStatus === "sold" ||
+    listingStatus === "hidden_by_seller" ||
+    listingStatus === "hidden_by_admin" ||
+    listingStatus === "expired" ||
+    isOverdue
+  ) {
+    throw new ApiError(
+      404,
+      "LISTING_NOT_AVAILABLE",
+      "Tin đăng này hiện không còn khả dụng để xem thông tin liên hệ."
+    );
+  }
+
+  // Đọc listingsPrivate để kiểm tra người mua đã xác nhận giữ chỗ
+  const privateSnap = await adminDb.collection("listingsPrivate").doc(listingId).get();
+  const privateData = privateSnap.data() || {};
+  const confirmedBuyerId = privateData.confirmedBuyerId as string | undefined;
+
+  // Nếu tin đang ở trạng thái reserved: CHỈ người mua đã được xác nhận (hoặc admin) mới được xem
+  if (listingStatus === "reserved") {
+    if (viewerId !== confirmedBuyerId && !isAdmin) {
+      throw new ApiError(
+        404,
+        "LISTING_NOT_AVAILABLE",
+        "Món đồ này hiện đã có người giữ chỗ và đang khóa thông tin liên hệ."
       );
     }
+  }
 
-    const { listingId } = parsed.data;
+  const isConfirmedBuyer = viewerId === confirmedBuyerId || isAdmin;
 
-    // 1. Đối chiếu trạng thái xác minh từ verifications/{uid}
-    const verifDoc = await adminDb.collection("verifications").doc(buyerId).get();
-    if (!verifDoc.exists || verifDoc.data()?.status !== "approved") {
-      return NextResponse.json(
-        {
-          error:
-            "Chỉ sinh viên đã được phê duyệt thẻ mới được xem thông tin liên hệ của người bán.",
-        },
-        { status: 403 }
-      );
-    }
+  // 5. Đọc thông tin liên hệ bảo mật từ usersPrivate của người bán
+  const sellerPrivateSnap = await adminDb.collection("usersPrivate").doc(sellerId).get();
+  if (!sellerPrivateSnap.exists) {
+    throw new ApiError(404, "CONTACT_NOT_FOUND", "Không tìm thấy thông tin liên hệ của người bán.");
+  }
 
-    // 2. Kiểm tra tin đăng tồn tại và đang hoạt động
-    const listingDoc = await adminDb.collection("listings").doc(listingId).get();
-    if (!listingDoc.exists) {
-      return NextResponse.json(
-        { error: "Không tìm thấy tin đăng này trên hệ thống." },
-        { status: 404 }
-      );
-    }
+  const sellerPrivate = sellerPrivateSnap.data() || {};
 
-    const listingData = listingDoc.data() || {};
-    const sellerId = listingData.sellerId;
-
-    if (listingData.status !== "active") {
-      return NextResponse.json(
-        { error: "Tin đăng này đã ẩn hoặc đã hoàn tất giao dịch." },
-        { status: 400 }
-      );
-    }
-
-    if (sellerId === buyerId) {
-      return NextResponse.json(
-        { error: "Bạn là người bán của tin đăng này." },
-        { status: 400 }
-      );
-    }
-
-    // 3. Kiểm tra giới hạn tần suất xem số (Rate Limiting trong 1 giờ)
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    const recentViewsSnap = await adminDb
-      .collection("contactViewLogs")
-      .where("buyerId", "==", buyerId)
-      .where("timestamp", ">=", oneHourAgo)
-      .get();
-
-    if (recentViewsSnap.size >= MAX_CONTACT_VIEWS_PER_HOUR) {
-      return NextResponse.json(
-        {
-          error:
-            "Bạn đã đạt giới hạn xem liên hệ (tối đa 10 lượt/giờ) nhằm bảo vệ thông tin sinh viên. Vui lòng quay lại sau 1 giờ.",
-        },
-        { status: 429 }
-      );
-    }
-
-    // 4. Lấy thông tin liên hệ từ usersPrivate của người bán
-    const sellerPrivateDoc = await adminDb.collection("usersPrivate").doc(sellerId).get();
-    if (!sellerPrivateDoc.exists) {
-      return NextResponse.json(
-        { error: "Không tìm thấy thông tin liên hệ của người bán" },
-        { status: 404 }
-      );
-    }
-
-    const sellerPrivate = sellerPrivateDoc.data();
-
-    // 5. Ghi log lịch sử xem liên hệ
-    await adminDb.collection("contactViewLogs").add({
-      buyerId,
+  // 6. Ghi nhận log xem liên hệ (tránh spam)
+  if (!alreadyViewed) {
+    await logRef.set({
+      viewerId,
       sellerId,
       listingId,
-      timestamp: FieldValue.serverTimestamp(),
+      firstViewedAt: FieldValue.serverTimestamp(),
+      lastViewedAt: FieldValue.serverTimestamp(),
+      viewCount: 1,
     });
-
-    return NextResponse.json({
-      success: true,
-      contact: {
-        zaloPhone: sellerPrivate?.zaloPhone || "Liên hệ qua chat trong app",
-        altPhone: sellerPrivate?.altPhone || null,
-        dormOrAddress: sellerPrivate?.dormOrAddress || "Xem chi tiết khi giữ chỗ",
-      },
+  } else {
+    await logRef.update({
+      lastViewedAt: FieldValue.serverTimestamp(),
+      viewCount: FieldValue.increment(1),
     });
-  } catch (err) {
-    return errorResponse(err);
   }
-}
+
+  // 7. Phản hồi luôn có Header Cache-Control: no-store
+  // QUY TẮC BẢO MẬT PDP:
+  // - Người mua thông thường xem tin active: chỉ nhận tên + SĐT Zalo.
+  // - Địa chỉ chính xác (exactAddress/detailedSchedule) CHỈ trả về cho confirmedBuyerId!
+  return NextResponse.json(
+    {
+      contact: {
+        realName: sellerPrivate.realName || "Sinh viên",
+        zaloPhone: sellerPrivate.zaloPhone || null,
+        altPhone: sellerPrivate.altPhone || null,
+      },
+      privateDetails: isConfirmedBuyer
+        ? {
+            exactAddress: (privateData.exactAddress as string) || null,
+            detailedSchedule: (privateData.detailedSchedule as string) || null,
+          }
+        : undefined,
+    },
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    }
+  );
+});

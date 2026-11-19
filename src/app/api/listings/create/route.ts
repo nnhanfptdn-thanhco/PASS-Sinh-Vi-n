@@ -1,194 +1,256 @@
+import "server-only";
 import { NextRequest, NextResponse } from "next/server";
-import { requireVerified, errorResponse } from "@/lib/auth/server";
+import { requireApprovedStudent } from "@/lib/auth/server";
+import { readJson, withApi, ApiError } from "@/lib/server/http";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
+import { createListingSchema } from "@/lib/server/schemas";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
-import { removeVietnameseTones } from "@/lib/utils";
-import { z } from "zod";
+import { normalizeVi, buildSearchTokens } from "@/lib/search/normalize";
+import { containsContactInfo } from "@/lib/utils/contact-filter";
+import { toPublicListingDTO } from "@/lib/services/listings";
+import { MAX_ACTIVE_LISTINGS_PER_SELLER } from "@/lib/constants/listing";
+import universitiesData from "@/data/universities_vietnam.json";
 
-const MAX_ACTIVE_LISTINGS_PER_SELLER = 10;
-const MAX_PRICE_VND = 500_000_000;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const createListingSchema = z.object({
-  title: z
-    .string()
-    .min(10, "Tên món đồ phải từ 10 đến 80 ký tự")
-    .max(80, "Tên món đồ phải từ 10 đến 80 ký tự")
-    .refine((val) => val !== val.toUpperCase() || val.length <= 15, {
-      message: "Tên món đồ không được viết hoa toàn bộ",
-    })
-    .refine(
-      (val) => !/(0[3|5|7|8|9]\d{8})|(https?:\/\/)|(www\.)/i.test(val),
-      {
-        message: "Tên món đồ không được chứa số điện thoại hoặc liên kết web",
-      }
-    ),
-  categoryId: z.string().min(1, "Vui lòng chọn danh mục"),
-  subcategory: z.string().optional(),
-  condition: z.string().min(1, "Vui lòng chọn tình trạng món đồ"),
-  brandModel: z.string().optional(),
-  usageTime: z.string().optional(),
-  defects: z.string().optional(),
-  noDefects: z.boolean().optional(),
-  description: z.string().optional(),
-  price: z
-    .number()
-    .min(0, "Giá pass không được âm")
-    .max(MAX_PRICE_VND, `Giá pass tối đa ${MAX_PRICE_VND.toLocaleString()} đ`),
-  originalPrice: z.number().optional(),
-  negotiationType: z.enum(["fixed", "slight", "flexible"]).optional(),
-  isCombo: z.boolean().optional(),
-  urgentPass: z.boolean().optional(),
-  passDeadline: z.string().optional(),
-  schoolCode: z.string().min(1, "Vui lòng chọn mã trường học"),
-  campusId: z.string().optional(),
-  provinceCode: z.string().min(1, "Vui lòng chọn tỉnh/thành"),
-  wardCode: z.string().optional(),
-  publicMeetingPoint: z.string().optional(),
-  exactAddress: z.string().optional(),
-  detailedSchedule: z.string().optional(),
-  shippingMethods: z.record(z.string(), z.any()).optional(),
-  itemDimensions: z.string().optional(),
-  images: z
-    .array(z.string().min(1))
-    .min(1, "Tin đăng phải có tối thiểu 1 ảnh thực tế")
-    .max(10, "Tin đăng có tối đa 10 ảnh"),
-  motorbikeDetails: z.record(z.string(), z.any()).optional(),
-});
+export const POST = withApi(async (req: NextRequest) => {
+  // 1. Xác thực sinh viên đã duyệt thẻ (Nguồn sự thật: Firestore)
+  const { token, verification, userDoc } = await requireApprovedStudent(req);
+  const sellerId = token.uid;
 
-export async function POST(req: NextRequest) {
-  try {
-    const token = await requireVerified(req);
-    const sellerId = token.uid;
-    const sellerName = token.name || "Sinh viên";
+  // 2. Rate limiting: Tối đa 5 tin/giờ/uid
+  await consumeRateLimit({
+    scope: "create_listing",
+    key: sellerId,
+    limit: 5,
+    windowSec: 3600,
+    customMessage: "Bạn đã đăng 5 tin trong vòng 1 giờ. Vui lòng quay lại sau để đăng thêm.",
+  });
 
-    const body = await req.json();
-    const parsed = createListingSchema.safeParse(body);
+  // 3. Đọc dữ liệu gửi lên
+  const body = await readJson(req, 64 * 1024);
+  const data = createListingSchema.parse(body);
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.issues.map((i) => i.message).join(", ") },
-        { status: 400 }
+  // Xử lý Idempotency
+  const idempotencyKey =
+    req.headers.get("idempotency-key") ||
+    data.clientRequestId ||
+    data.draftId;
+
+  if (idempotencyKey) {
+    const idemRef = adminDb.collection("idempotency").doc(`${sellerId}_${idempotencyKey}`);
+    const idemSnap = await idemRef.get();
+    if (idemSnap.exists) {
+      const savedData = idemSnap.data();
+      return NextResponse.json(savedData?.responseBody || { success: true }, { status: 200 });
+    }
+  }
+
+  // 4. Chặn số điện thoại, Zalo, link mạng xã hội trong các trường văn bản công khai
+  const publicTextFields = [
+    data.title,
+    data.description,
+    data.defects,
+    data.brandModel,
+    data.usageTime,
+    data.publicMeetingPoint,
+    data.shippingMethods.shipFeeNote,
+  ];
+
+  for (const text of publicTextFields) {
+    if (text && containsContactInfo(text)) {
+      throw new ApiError(
+        400,
+        "CONTACT_INFO_IN_PUBLIC_TEXT",
+        "Nội dung không được chứa số điện thoại, Zalo hoặc liên kết. Thông tin liên hệ sẽ hiện cho người mua đã xác minh."
+      );
+    }
+  }
+
+  // 5. Kiểm tra tính hợp lệ của ảnh
+  // Tối thiểu 3 ảnh, không chấp nhận data: base64
+  for (const imgUrl of data.images) {
+    if (imgUrl.startsWith("data:") || imgUrl.length > 2000) {
+      throw new ApiError(
+        400,
+        "INVALID_IMAGE_URL",
+        "Ảnh phải được tải lên hệ thống lưu trữ Cloud Storage trước khi đăng tin. Không chấp nhận ảnh dạng base64."
       );
     }
 
-    const data = parsed.data;
+    // Đảm bảo ảnh thuộc thư mục public/listings/{sellerId}/
+    const hasValidUidPath =
+      imgUrl.includes(`public/listings/${sellerId}/`) ||
+      imgUrl.includes(`public%2Flistings%2F${sellerId}%2F`);
 
-    // 1. Kiểm tra giới hạn 10 tin đang bán của tài khoản
-    const activeListingsSnap = await adminDb
+    if (!hasValidUidPath) {
+      throw new ApiError(
+        400,
+        "INVALID_IMAGE_OWNER",
+        "Đường dẫn tệp ảnh không hợp lệ hoặc không thuộc tài khoản của bạn."
+      );
+    }
+  }
+
+  // Loại bỏ ảnh trùng lặp
+  const uniqueImages = Array.from(new Set(data.images));
+  if (uniqueImages.length < 3) {
+    throw new ApiError(400, "MIN_IMAGES_REQUIRED", "Tin đăng phải có tối thiểu 3 ảnh thực tế khác nhau.");
+  }
+
+  // 6. Trường học và địa phương ép buộc từ hồ sơ đã duyệt ở server
+  const verifiedSchoolCode =
+    (verification.schoolCode as string) ||
+    (userDoc.schoolCode as string) ||
+    data.schoolCode ||
+    "";
+
+  const matchedSchool = (universitiesData as Array<{
+    code: string;
+    name: string;
+    provinceCode: string;
+    wardCode: string;
+    campuses: Array<{ id: string; name: string }>;
+  }>).find((u) => u.code === verifiedSchoolCode);
+
+  const schoolCode = verifiedSchoolCode;
+  const schoolName = matchedSchool?.name || (verification.schoolName as string) || "";
+  const provinceCode = matchedSchool?.provinceCode || data.provinceCode || "";
+  const wardCode = matchedSchool?.wardCode || data.wardCode || "";
+  const campusId = data.campusId || matchedSchool?.campuses[0]?.id || "c1";
+  const campusName = matchedSchool?.campuses.find((c) => c.id === campusId)?.name || "";
+
+  // Sinh ID tin đăng
+  const listingId = data.draftId || `l_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const listingRef = adminDb.collection("listings").doc(listingId);
+  const listingPrivateRef = adminDb.collection("listingsPrivate").doc(listingId);
+
+  const titleNormalized = normalizeVi(data.title);
+  const searchTokens = buildSearchTokens(data.title, [data.brandModel, data.subcategory]);
+
+  // 7. Thực thi Transaction nguyên tử
+  const createdListingDTO = await adminDb.runTransaction(async (transaction) => {
+    // A. Kiểm tra trùng ID
+    const existingSnap = await transaction.get(listingRef);
+    if (existingSnap.exists) {
+      throw new ApiError(409, "LISTING_EXISTS", "Mã tin đăng này đã tồn tại trên hệ thống.");
+    }
+
+    // B. Kiểm tra giới hạn 10 slot (status in ["active", "reserved"])
+    const activeQuery = adminDb
       .collection("listings")
       .where("sellerId", "==", sellerId)
-      .where("status", "==", "active")
-      .get();
+      .where("status", "in", ["active", "reserved"]);
 
+    const activeListingsSnap = await transaction.get(activeQuery);
     if (activeListingsSnap.size >= MAX_ACTIVE_LISTINGS_PER_SELLER) {
-      return NextResponse.json(
-        {
-          error: `Bạn đang có ${activeListingsSnap.size} tin đang bán. Mỗi tài khoản chỉ được mở tối đa 10 tin cùng lúc. Vui lòng ẩn hoặc hoàn tất các tin cũ trước khi đăng thêm.`,
-        },
-        { status: 429 }
+      throw new ApiError(
+        429,
+        "MAX_SLOTS_REACHED",
+        `Bạn đang có ${activeListingsSnap.size} tin đang hoạt động. Mỗi tài khoản chỉ được mở tối đa ${MAX_ACTIVE_LISTINGS_PER_SELLER} tin cùng lúc.`
       );
     }
 
-    // 2. Chống đăng trùng: kiểm tra độ tương đồng tên tin của cùng người bán
-    const normalizedNewTitle = removeVietnameseTones(data.title);
+    // C. Kiểm tra trùng tiêu đề với tin đang bán của cùng người bán
     for (const doc of activeListingsSnap.docs) {
-      const existingTitle = removeVietnameseTones(doc.data().title || "");
-      if (
-        normalizedNewTitle === existingTitle ||
-        (existingTitle.includes(normalizedNewTitle) && normalizedNewTitle.length > 15)
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Bạn đã có một tin đăng có tên tương tự đang còn hiệu lực. Vui lòng kiểm tra lại để tránh đăng trùng lặp.",
-          },
-          { status: 409 }
+      const activeData = doc.data();
+      const existingTitleNorm = normalizeVi(activeData.title as string);
+
+      const isExactDuplicate = existingTitleNorm === titleNormalized;
+      const isSubDuplicate =
+        titleNormalized.length >= 15 &&
+        (existingTitleNorm.includes(titleNormalized) || titleNormalized.includes(existingTitleNorm));
+
+      if (isExactDuplicate || isSubDuplicate) {
+        throw new ApiError(
+          409,
+          "DUPLICATE_TITLE",
+          "Bạn đã có một tin đăng tương tự đang hoạt động. Vui lòng không đăng tin trùng lặp."
         );
       }
     }
 
-    // 3. Tạo searchTokens
-    const tokensSet = new Set<string>();
-    const words = normalizedNewTitle.split(/\s+/).filter(Boolean);
-    for (const w of words) {
-      if (w.length >= 2) tokensSet.add(w);
-    }
-    const searchTokens = Array.from(tokensSet);
+    // D. Dữ liệu công khai
+    const coverImage = uniqueImages[0];
+    const thumbs = data.thumbs && data.thumbs.length > 0 ? data.thumbs : undefined;
+    const coverThumb = thumbs?.[0] || coverImage;
 
-    // 4. Tạo mã tin đăng
-    const listingRef = adminDb.collection("listings").doc();
-    const listingId = listingRef.id;
-
-    // 5. Lưu dữ liệu công khai vào collection listings
-    await listingRef.set({
+    const publicListingData: Record<string, unknown> = {
       id: listingId,
       sellerId,
-      sellerName,
-      title: data.title.trim(),
-      titleNormalized: normalizedNewTitle,
+      title: data.title,
+      titleNormalized,
       searchTokens,
       categoryId: data.categoryId,
       subcategory: data.subcategory || null,
       condition: data.condition,
       brandModel: data.brandModel || null,
       usageTime: data.usageTime || null,
-      defects: data.noDefects ? "Không có lỗi" : data.defects || "Không có lỗi",
+      defects: data.defects || null,
+      noDefects: Boolean(data.noDefects),
       description: data.description || "",
-      price: Math.round(data.price / 1000) * 1000,
-      originalPrice: data.originalPrice ? Math.round(data.originalPrice / 1000) * 1000 : null,
-      negotiationType: data.negotiationType || "flexible",
-      isCombo: Boolean(data.isCombo),
+      price: data.price,
+      originalPrice: data.originalPrice || null,
+      negotiationType: data.negotiationType,
       urgentPass: Boolean(data.urgentPass),
-      passDeadline: data.passDeadline || null,
-      schoolCode: data.schoolCode,
-      campusId: data.campusId || null,
-      provinceCode: data.provinceCode,
-      wardCode: data.wardCode || null,
-      publicMeetingPoint: data.publicMeetingPoint || "Cổng chính khuôn viên trường",
-      shippingMethods: data.shippingMethods || { pickup: true },
-      hasShipping: Boolean(
-        data.shippingMethods?.sellerDelivery || data.shippingMethods?.carrierShipping
-      ),
-      campusDelivery: Boolean(data.shippingMethods?.campusDelivery),
+      passDeadline: data.passDeadline,
+      schoolCode,
+      schoolName,
+      campusId,
+      campusName,
+      provinceCode,
+      wardCode,
+      publicMeetingPoint: data.publicMeetingPoint,
+      shippingMethods: data.shippingMethods,
       itemDimensions: data.itemDimensions || null,
-      images: data.images,
-      coverImage: data.images[0] || "",
-      motorbikeDetails: data.motorbikeDetails || null,
+      images: uniqueImages,
+      thumbs: thumbs || null,
+      coverImage,
+      coverThumb,
       status: "active",
       viewsCount: 0,
       favoritesCount: 0,
       chatsCount: 0,
+      clientRequestId: idempotencyKey || null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
-    });
+    };
 
-    // 6. Lưu dữ liệu bảo mật vào collection listingsPrivate
-    await adminDb.collection("listingsPrivate").doc(listingId).set({
+    // E. Dữ liệu riêng tư
+    const privateListingData = {
       listingId,
       sellerId,
-      exactAddress: data.exactAddress || null,
-      detailedSchedule: data.detailedSchedule || null,
+      exactAddress: data.exactAddress || "",
+      detailedSchedule: data.detailedSchedule || "",
       confirmedBuyerId: null,
-      updatedAt: FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
+    };
+
+    transaction.set(listingRef, publicListingData);
+    transaction.set(listingPrivateRef, privateListingData);
+
+    return toPublicListingDTO(publicListingData, listingId);
+  });
+
+  // Lưu Idempotency cache nếu có key
+  if (idempotencyKey) {
+    await adminDb.collection("idempotency").doc(`${sellerId}_${idempotencyKey}`).set({
+      responseBody: {
+        success: true,
+        listingId,
+        listing: createdListingDTO,
+      },
+      createdAt: FieldValue.serverTimestamp(),
     });
+  }
 
-    // 7. Tăng bộ đếm activeListingsCount của user
-    await adminDb
-      .collection("users")
-      .doc(sellerId)
-      .set(
-        {
-          activeListingsCount: FieldValue.increment(1),
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-    return NextResponse.json({
+  return NextResponse.json(
+    {
       success: true,
       listingId,
-      message: "Đăng tin thành công! Tin của bạn đã xuất hiện trên chợ sinh viên.",
-    });
-  } catch (err) {
-    return errorResponse(err);
-  }
-}
+      listing: createdListingDTO,
+    },
+    { status: 200 }
+  );
+});

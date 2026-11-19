@@ -1,108 +1,77 @@
+import "server-only";
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase/admin";
-import { removeVietnameseTones } from "@/lib/utils";
+import { searchListings } from "@/lib/services/listings";
 
 export const dynamic = "force-dynamic";
-
-interface ListingSearchItem {
-  id: string;
-  title?: string;
-  titleNormalized?: string;
-  price?: number;
-  urgentPass?: boolean;
-  hasShipping?: boolean;
-  [key: string]: unknown;
-}
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const q = searchParams.get("q") || "";
-    const category = searchParams.get("category");
-    const school = searchParams.get("school");
-    const province = searchParams.get("province");
+
+    const q = searchParams.get("q") || undefined;
+    const category = searchParams.get("category") || undefined;
+    const school = searchParams.get("school") || undefined;
+    const province = searchParams.get("province") || undefined;
     const urgent = searchParams.get("urgent") === "true";
     const shipping = searchParams.get("shipping") === "true";
-    const minPrice = Number(searchParams.get("minPrice") || 0);
-    const maxPrice = Number(searchParams.get("maxPrice") || 500000000);
-    const sort = searchParams.get("sort") || "relevant";
-    const limit = Number(searchParams.get("limit") || 20);
 
-    let query: FirebaseFirestore.Query = adminDb
-      .collection("listings")
-      .where("status", "==", "active");
+    const rawMinPrice = searchParams.get("minPrice");
+    const minPrice = rawMinPrice ? Number(rawMinPrice) : undefined;
 
-    // Lọc theo danh mục
-    if (category && category !== "all") {
-      query = query.where("categoryId", "==", category);
-    }
+    const rawMaxPrice = searchParams.get("maxPrice");
+    const maxPrice = rawMaxPrice ? Number(rawMaxPrice) : undefined;
 
-    // Lọc theo trường
-    if (school && school !== "all") {
-      query = query.where("schoolCode", "==", school);
-    }
+    const sort = (searchParams.get("sort") as "relevant" | "newest" | "price_asc" | "price_desc") || "relevant";
+    const cursor = searchParams.get("cursor") || undefined;
 
-    // Lọc theo tỉnh thành
-    if (province && province !== "all") {
-      query = query.where("provinceCode", "==", province);
-    }
+    const rawLimit = searchParams.get("limit");
+    const limit = rawLimit ? Number(rawLimit) : 20;
 
-    // Sắp xếp
-    if (sort === "newest") {
-      query = query.orderBy("createdAt", "desc");
-    } else if (sort === "price_asc") {
-      query = query.orderBy("price", "asc");
-    } else if (sort === "price_desc") {
-      query = query.orderBy("price", "desc");
-    }
+    const viewerSchool = searchParams.get("viewerSchool") || undefined;
+    const viewerProvince = searchParams.get("viewerProvince") || undefined;
 
-    query = query.limit(limit);
-
-    const snapshot = await query.get();
-    let items: ListingSearchItem[] = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    // Lọc client-side cho tìm kiếm từ khóa tiếng Việt không dấu & bộ lọc phụ
-    if (q) {
-      const normalizedQ = removeVietnameseTones(q).toLowerCase();
-      const queryWords = normalizedQ.split(/\s+/).filter(Boolean);
-
-      items = items.filter((item) => {
-        const itemTitle = (
-          item.titleNormalized || removeVietnameseTones(item.title || "")
-        ).toLowerCase();
-        return queryWords.every((word) => itemTitle.includes(word));
-      });
-    }
-
-    if (urgent) {
-      items = items.filter((item) => Boolean(item.urgentPass));
-    }
-
-    if (shipping) {
-      items = items.filter((item) => Boolean(item.hasShipping));
-    }
-
-    if (minPrice > 0 || maxPrice < 500000000) {
-      items = items.filter(
-        (item) =>
-          typeof item.price === "number" &&
-          item.price >= minPrice &&
-          item.price <= maxPrice
-      );
-    }
-
-    return NextResponse.json({
-      items,
-      total: items.length,
+    const result = await searchListings({
+      q,
+      category: category === "all" ? undefined : category,
+      school: school === "all" ? undefined : school,
+      province: province === "all" ? undefined : province,
+      urgent,
+      shipping,
+      minPrice,
+      maxPrice,
+      sort,
+      cursor,
+      limit,
+      viewerSchool,
+      viewerProvince,
     });
-  } catch (err) {
-    console.error("Lỗi tìm kiếm tin:", err);
+
     return NextResponse.json(
-      { error: "Lỗi nội bộ máy chủ khi tìm kiếm" },
-      { status: 500 }
+      {
+        items: result.items,
+        nextCursor: result.nextCursor,
+        total: result.items.length,
+      },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      }
+    );
+  } catch (error: unknown) {
+    console.error("[SEARCH_API_ERROR] Lỗi tìm kiếm tin đăng:", error);
+    return NextResponse.json(
+      {
+        items: [],
+        error: "Lỗi nội bộ khi tìm kiếm tin đăng",
+      },
+      {
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      }
     );
   }
 }

@@ -2,115 +2,40 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthContext";
-import { authFetch } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
-import { formatCurrencyVND } from "@/lib/utils";
 import {
-  Share2,
-  Heart,
-  MapPin,
   Clock,
-  Truck,
+  MapPin,
   Building,
+  Truck,
+  Heart,
+  Share2,
   AlertTriangle,
-  Phone,
   Check,
   CheckCircle2,
+  Phone,
+  ShieldAlert,
+  Lock,
 } from "lucide-react";
-
-export interface ListingDetailData {
-  id: string;
-  title: string;
-  price: number;
-  originalPrice?: number;
-  urgentPass?: boolean;
-  condition: string;
-  brandModel?: string;
-  usageTime?: string;
-  defects?: string;
-  description: string;
-  images: string[];
-  negotiationType?: string;
-  passDeadline: string;
-  schoolCode: string;
-  schoolName: string;
-  campusName: string;
-  publicMeetingPoint: string;
-  seller: {
-    id: string;
-    displayName: string;
-    avatarUrl: string;
-    verified: boolean;
-    rating: number;
-    completedDealsCount: number;
-    joinDate: string;
-    isGraduating?: boolean;
-  };
-  shipping: {
-    allowPickup: boolean;
-    pickupSchedule?: string;
-    allowSellerShip: boolean;
-    shipFee?: string;
-    allowCarrier: boolean;
-    campusDelivery?: boolean;
-  };
-}
+import { formatCurrencyVND } from "@/lib/utils";
+import { authFetch } from "@/lib/firebase/client";
+import type { PublicListingDTO, PublicSellerProfile } from "@/lib/services/listings";
+import { formatDeadlineVN } from "@/lib/utils/date";
 
 export function ListingDetailClient({
-  listing: initialListing,
+  listing,
+  seller,
 }: {
-  listing: ListingDetailData;
+  listing: PublicListingDTO;
+  seller: PublicSellerProfile;
 }) {
+  const router = useRouter();
   const { user, profile } = useAuth();
-  const [listing, setListing] = React.useState<ListingDetailData>(initialListing);
 
-  React.useEffect(() => {
-    try {
-      const stored = localStorage.getItem("cho_pass_my_listings");
-      if (stored) {
-        const list = JSON.parse(stored);
-        const found = list.find((item: { id?: string }) => item.id === initialListing.id);
-        if (found) {
-          setListing((prev) => ({
-            ...prev,
-            id: found.id || prev.id,
-            title: found.title || prev.title,
-            price: typeof found.price === "number" ? found.price : prev.price,
-            originalPrice: found.originalPrice || prev.originalPrice,
-            urgentPass: found.urgentPass ?? prev.urgentPass,
-            condition: found.condition || prev.condition,
-            brandModel: found.brandModel || prev.brandModel,
-            usageTime: found.usageTime || prev.usageTime,
-            defects: found.defects || prev.defects,
-            description: found.description || prev.description,
-            images:
-              Array.isArray(found.images) && found.images.length > 0
-                ? found.images
-                : found.coverImage
-                ? [found.coverImage]
-                : prev.images,
-            passDeadline: found.passDeadline || prev.passDeadline,
-            schoolName: found.schoolName || prev.schoolName,
-            schoolCode: found.schoolCode || prev.schoolCode,
-            publicMeetingPoint:
-              found.publicMeetingPoint || prev.publicMeetingPoint,
-            seller: {
-              ...prev.seller,
-              displayName: profile?.displayName || "Nam Nhân (Đã duyệt thẻ)",
-              avatarUrl:
-                profile?.photoURL ||
-                prev.seller.avatarUrl,
-            },
-          }));
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }, [initialListing.id, profile]);
   const [activeImageIndex, setActiveImageIndex] = React.useState(0);
   const [isFavorite, setIsFavorite] = React.useState(false);
   const [copiedLink, setCopiedLink] = React.useState(false);
@@ -119,23 +44,30 @@ export function ListingDetailClient({
   const [sellerContact, setSellerContact] = React.useState<{
     zaloPhone?: string;
     altPhone?: string;
+    exactAddress?: string;
+    dormOrAddress?: string;
   } | null>(null);
   const [isLoadingContact, setIsLoadingContact] = React.useState(false);
   const [contactError, setContactError] = React.useState<string | null>(null);
 
   // Giữ chỗ modal state
   const [isReserveModalOpen, setIsReserveModalOpen] = React.useState(false);
-  const [reserveMethod, setReserveMethod] = React.useState<"pickup" | "sellerShip">("pickup");
+  const [reserveMethod, setReserveMethod] = React.useState<"pickup" | "sellerDelivery">("pickup");
   const [preferredTime, setPreferredTime] = React.useState("Chiều mai khoảng 17h30");
+  const [isSubmittingReserve, setIsSubmittingReserve] = React.useState(false);
   const [reserveSuccess, setReserveSuccess] = React.useState(false);
+  const [reserveError, setReserveError] = React.useState<string | null>(null);
+
+  const isOwner = Boolean(user && user.uid === listing.sellerId);
+  const isReserved = listing.status === "reserved";
 
   const handleRevealContact = async () => {
     if (!user) {
-      alert("Vui lòng đăng nhập để xem thông tin liên hệ của người bán.");
+      router.push(`/auth/login?next=/listings/${listing.id}`);
       return;
     }
     if (!profile?.verified) {
-      alert("Tài khoản của bạn cần được duyệt thẻ sinh viên trước khi xem số liên hệ.");
+      setContactError("Tài khoản của bạn cần được phê duyệt thẻ sinh viên trước khi xem số liên hệ.");
       return;
     }
 
@@ -145,14 +77,12 @@ export function ListingDetailClient({
       const res = await authFetch("/api/listings/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          listingId: listing.id,
-        }),
+        body: JSON.stringify({ listingId: listing.id }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setContactError(data.error || "Không thể lấy số liên hệ");
+        setContactError(data.error?.message || data.error || "Không thể lấy số liên hệ");
         return;
       }
       setSellerContact(data.contact);
@@ -163,19 +93,64 @@ export function ListingDetailClient({
     }
   };
 
-  const handleShare = () => {
-    navigator.clipboard.writeText(window.location.href);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2500);
+  const handleShare = async () => {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({
+          title: listing.title,
+          text: `Pass đồ sinh viên: ${listing.title} - ${listing.price.toLocaleString("vi-VN")} đ`,
+          url: window.location.href,
+        });
+        return;
+      } catch {
+        // Fallback
+      }
+    }
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      try {
+        await navigator.clipboard.writeText(window.location.href);
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2500);
+      } catch {
+        // Fallback
+      }
+    }
+  };
+
+  const [isFavorited, setIsFavorited] = React.useState(false);
+  const handleToggleFavorite = async () => {
+    if (!user) {
+      router.push(`/auth/login?next=/listings/${listing.id}`);
+      return;
+    }
+    const nextVal = !isFavorited;
+    setIsFavorited(nextVal);
+    try {
+      const res = await authFetch("/api/favorites/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ listingId: listing.id }),
+      });
+      if (!res.ok) setIsFavorited(!nextVal);
+    } catch {
+      setIsFavorited(!nextVal);
+    }
   };
 
   const handleConfirmReservation = async () => {
     if (!user) {
-      alert("Vui lòng đăng nhập để đặt gạch món đồ.");
+      router.push(`/auth/login?next=/listings/${listing.id}`);
       return;
     }
+    if (!profile?.verified) {
+      setReserveError("Bạn cần được duyệt thẻ sinh viên để gửi yêu cầu giữ chỗ.");
+      return;
+    }
+
+    setIsSubmittingReserve(true);
+    setReserveError(null);
     try {
-      await authFetch("/api/reservations/create", {
+      const res = await authFetch("/api/reservations/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -184,11 +159,21 @@ export function ListingDetailClient({
           preferredSchedule: preferredTime,
         }),
       });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setReserveError(data.error?.message || data.error || "Không thể gửi yêu cầu giữ chỗ.");
+        return;
+      }
       setReserveSuccess(true);
     } catch {
-      setReserveSuccess(true);
+      setReserveError("Lỗi kết nối máy chủ.");
+    } finally {
+      setIsSubmittingReserve(false);
     }
   };
+
+  const currentImage = listing.images[activeImageIndex] || listing.coverImage || "";
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-8">
@@ -212,26 +197,58 @@ export function ListingDetailClient({
             onClick={() => setIsFavorite(!isFavorite)}
           >
             <Heart
-              className={`w-3.5 h-3.5 ${
-                isFavorite ? "fill-red-500 text-red-500" : ""
-              }`}
+              className={`w-3.5 h-3.5 ${isFavorite ? "fill-red-500 text-red-500" : ""}`}
             />
           </Button>
         </div>
       </div>
 
+      {/* Banner nếu là tin của chính người xem */}
+      {isOwner && (
+        <div className="p-4 bg-primary-light border border-primary/30 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-primary">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-primary shrink-0" />
+            <span className="font-semibold text-sm">
+              Đây là tin đăng của bạn. Người mua sẽ nhìn thấy tin này theo đúng giao diện dưới đây.
+            </span>
+          </div>
+          <Link href="/my-listings">
+            <Button variant="primary" size="sm">
+              Quản lý trong Tin của tôi
+            </Button>
+          </Link>
+        </div>
+      )}
+
+      {/* Banner nếu tin đang ở trạng thái reserved */}
+      {isReserved && !isOwner && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3 text-xs text-amber-800 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-800">
+          <Lock className="w-5 h-5 text-amber-600 shrink-0" />
+          <div>
+            <span className="font-bold text-sm block">Món đồ này đã có người giữ chỗ</span>
+            <span>Tin đăng hiện đang tạm khóa giữ chỗ mới để người bán hoàn tất giao dịch với người mua trước.</span>
+          </div>
+        </div>
+      )}
+
       {/* Grid 2 cột: Ảnh bên trái & Thông tin bên phải */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* CỘT TRÁI: THƯ VIỆN ẢNH VUỐT / ZOOM */}
+        {/* CỘT TRÁI: THƯ VIỆN ẢNH */}
         <div className="lg:col-span-7 space-y-3">
           {/* Ảnh lớn chính (Aspect ratio 4:3) */}
           <div className="relative aspect-[4/3] w-full rounded-2xl overflow-hidden bg-surface-muted border border-surface-border shadow-card">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={listing.images[activeImageIndex]}
-              alt={listing.title}
-              className="w-full h-full object-cover"
-            />
+            {currentImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={currentImage}
+                alt={listing.title}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-text-muted text-xs">
+                Chưa có ảnh
+              </div>
+            )}
             {listing.urgentPass && (
               <div className="absolute top-3 left-3">
                 <Badge variant="urgent">⚡ Pass trong ngày</Badge>
@@ -240,27 +257,29 @@ export function ListingDetailClient({
           </div>
 
           {/* Thumbnails */}
-          <div className="flex items-center gap-2.5 overflow-x-auto pb-1 no-scrollbar">
-            {listing.images.map((img: string, idx: number) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => setActiveImageIndex(idx)}
-                className={`relative w-16 h-16 rounded-xl overflow-hidden border-2 shrink-0 transition-all ${
-                  activeImageIndex === idx
-                    ? "border-primary ring-2 ring-primary/20 scale-105"
-                    : "border-surface-border opacity-70 hover:opacity-100"
-                }`}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={img}
-                  alt={`Thumbnail ${idx + 1}`}
-                  className="w-full h-full object-cover"
-                />
-              </button>
-            ))}
-          </div>
+          {listing.images.length > 1 && (
+            <div className="flex items-center gap-2.5 overflow-x-auto pb-1 no-scrollbar">
+              {listing.images.map((img: string, idx: number) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setActiveImageIndex(idx)}
+                  className={`relative w-16 h-16 rounded-xl overflow-hidden border-2 shrink-0 transition-all ${
+                    activeImageIndex === idx
+                      ? "border-primary ring-2 ring-primary/20 scale-105"
+                      : "border-surface-border opacity-70 hover:opacity-100"
+                  }`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img}
+                    alt={`Thumbnail ${idx + 1}`}
+                    className="w-full h-full object-cover"
+                  />
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Cảnh báo an toàn mua bán */}
           <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200">
@@ -273,7 +292,7 @@ export function ListingDetailClient({
               <br />
               • Kiểm tra kỹ hoạt động của quạt/nồi cơm/máy tính trước khi thanh toán.
               <br />
-              • Quản trị viên Chợ Pass SV không bao giờ yêu cầu bạn cung cấp mật khẩu hay mã OTP.
+              • Luôn hẹn gặp ở nơi công cộng như cổng trường, KTX vào ban ngày.
             </p>
           </div>
         </div>
@@ -283,9 +302,9 @@ export function ListingDetailClient({
           <div className="space-y-2">
             <div className="flex items-baseline gap-3">
               <span className="text-2xl sm:text-3xl font-extrabold text-primary">
-                {formatCurrencyVND(listing.price)}
+                {listing.price === 0 ? "Tặng miễn phí" : formatCurrencyVND(listing.price)}
               </span>
-              {listing.originalPrice && (
+              {listing.originalPrice && listing.originalPrice > listing.price && (
                 <span className="text-sm text-text-muted line-through">
                   {formatCurrencyVND(listing.originalPrice)}
                 </span>
@@ -299,73 +318,111 @@ export function ListingDetailClient({
               </Badge>
             </div>
 
-            <h1 className="text-lg sm:text-xl font-bold font-heading text-text-main leading-snug">
-              {listing.title}
-            </h1>
+            <div className="flex items-start justify-between gap-3">
+              <h1 className="text-lg sm:text-xl font-bold font-heading text-text-main leading-snug flex-1">
+                {listing.title}
+              </h1>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleToggleFavorite}
+                  className="p-2 rounded-xl bg-surface border border-surface-border hover:bg-surface-muted transition-colors text-text-muted hover:text-red-500 cursor-pointer"
+                  aria-label="Yêu thích"
+                >
+                  <Heart
+                    className={`w-5 h-5 ${
+                      isFavorited ? "fill-red-500 text-red-500" : ""
+                    }`}
+                  />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShare}
+                  className="p-2 rounded-xl bg-surface border border-surface-border hover:bg-surface-muted transition-colors text-text-muted hover:text-text-main cursor-pointer"
+                  aria-label="Chia sẻ"
+                >
+                  {copiedLink ? (
+                    <Check className="w-5 h-5 text-primary" />
+                  ) : (
+                    <Share2 className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
 
             <div className="flex items-center gap-3 text-xs text-text-muted pt-1">
               <span className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5" />
-                <span>Hạn: {listing.passDeadline}</span>
+                <span>Hạn: {formatDeadlineVN(listing.passDeadline)}</span>
               </span>
               <span>•</span>
               <span>{listing.condition}</span>
             </div>
           </div>
 
-          {/* NÚT HÀNH ĐỘNG CHÍNH: GIỮ CHỖ & LIÊN HỆ */}
-          <div className="p-4 bg-surface-muted rounded-2xl border border-surface-border space-y-3">
-            <Button
-              variant="urgent"
-              size="lg"
-              className="w-full text-base font-bold shadow-elevated"
-              onClick={() => {
-                setReserveSuccess(false);
-                setIsReserveModalOpen(true);
-              }}
-            >
-              Giữ Chỗ Món Đồ Này
-            </Button>
-
-            {/* Khối Hiện liên hệ Zalo / SĐT có bảo mật */}
-            {!sellerContact ? (
+          {/* NÚT HÀNH ĐỘNG: GIỮ CHỖ & LIÊN HỆ */}
+          {!isOwner && (
+            <div className="p-4 bg-surface-muted rounded-2xl border border-surface-border space-y-3">
               <Button
-                variant="outline"
-                size="md"
-                className="w-full"
-                leftIcon={<Phone className="w-4 h-4" />}
-                isLoading={isLoadingContact}
-                onClick={handleRevealContact}
+                variant="urgent"
+                size="lg"
+                disabled={isReserved}
+                className="w-full text-base font-bold shadow-elevated"
+                onClick={() => {
+                  setReserveError(null);
+                  setReserveSuccess(false);
+                  setIsReserveModalOpen(true);
+                }}
               >
-                Hiện Số Zalo / Điện Thoại
+                {isReserved ? "Đã Có Người Giữ Chỗ" : "Giữ Chỗ Món Đồ Này"}
               </Button>
-            ) : (
-              <div className="p-3 bg-surface rounded-xl border border-primary/40 space-y-1 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-text-secondary">Số Zalo liên hệ:</span>
-                  <span className="font-bold text-primary font-mono text-sm">
-                    {sellerContact.zaloPhone}
-                  </span>
-                </div>
-                {sellerContact.altPhone && (
+
+              {/* Khối Hiện liên hệ Zalo / SĐT có bảo mật */}
+              {!sellerContact ? (
+                <Button
+                  variant="outline"
+                  size="md"
+                  className="w-full"
+                  leftIcon={<Phone className="w-4 h-4" />}
+                  isLoading={isLoadingContact}
+                  onClick={handleRevealContact}
+                >
+                  Hiện Số Zalo / Điện Thoại
+                </Button>
+              ) : (
+                <div className="p-3 bg-surface rounded-xl border border-primary/40 space-y-1.5 text-xs">
                   <div className="flex items-center justify-between">
-                    <span className="text-text-muted">Số gọi:</span>
-                    <span className="font-mono">{sellerContact.altPhone}</span>
+                    <span className="font-semibold text-text-secondary">Số Zalo liên hệ:</span>
+                    <span className="font-bold text-primary font-mono text-sm">
+                      {sellerContact.zaloPhone}
+                    </span>
                   </div>
-                )}
-              </div>
-            )}
+                  {sellerContact.altPhone && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-text-muted">Số gọi:</span>
+                      <span className="font-mono">{sellerContact.altPhone}</span>
+                    </div>
+                  )}
+                  {sellerContact.exactAddress && (
+                    <div className="pt-1 border-t border-surface-border">
+                      <span className="font-semibold text-text-secondary block">Địa chỉ nhận đồ chính xác:</span>
+                      <span className="text-text-main">{sellerContact.exactAddress}</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
-            {contactError && (
-              <p className="text-xs text-red-600 font-medium text-center">
-                {contactError}
+              {contactError && (
+                <p className="text-xs text-red-600 font-medium text-center">
+                  {contactError}
+                </p>
+              )}
+
+              <p className="text-[11px] text-text-muted text-center">
+                Nhấn giữ chỗ để người bán xác nhận và mở địa chỉ nhận hàng chính xác.
               </p>
-            )}
-
-            <p className="text-[11px] text-text-muted text-center">
-              Nhấn giữ chỗ để người bán xác nhận và mở địa chỉ nhận hàng chính xác.
-            </p>
-          </div>
+            </div>
+          )}
 
           {/* THÔNG TIN NGƯỜI BÁN */}
           <div className="p-4 bg-surface border border-surface-border rounded-2xl space-y-3 shadow-subtle">
@@ -375,30 +432,38 @@ export function ListingDetailClient({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-full overflow-hidden bg-primary-light shrink-0 border border-surface-border">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={listing.seller.avatarUrl}
-                    alt={listing.seller.displayName}
-                    className="w-full h-full object-cover"
-                  />
+                  {seller.photoURL ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={seller.photoURL}
+                      alt={seller.displayName}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center font-bold text-primary text-sm">
+                      {seller.displayName.slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm font-bold text-text-main">
-                      {listing.seller.displayName}
+                      {seller.displayName}
                     </span>
-                    <Badge variant="verified" className="text-[10px] py-0">
-                      ✓ Đã xác minh
-                    </Badge>
+                    {seller.verified && (
+                      <Badge variant="verified" className="text-[10px] py-0">
+                        ✓ Đã xác minh
+                      </Badge>
+                    )}
                   </div>
                   <p className="text-xs text-text-secondary">
-                    {listing.seller.rating} ★ · Đã bán {listing.seller.completedDealsCount} món
+                    {seller.rating} ★ · Đã bán {seller.completedDealsCount} món
                   </p>
                 </div>
               </div>
 
               <Link
-                href={`/sellers/${listing.seller.id}`}
+                href={`/sellers/${seller.id}`}
                 className="inline-flex items-center justify-center font-medium rounded-lg transition-colors h-9 px-3 text-xs bg-surface-muted text-text-main hover:bg-surface-border border border-surface-border"
               >
                 Xem hồ sơ
@@ -406,7 +471,7 @@ export function ListingDetailClient({
             </div>
           </div>
 
-          {/* KHỐI GIAO NHẬN CHI TIẾT THEO SPEC */}
+          {/* KHỐI GIAO NHẬN CHI TIẾT */}
           <div className="p-4 bg-surface border border-surface-border rounded-2xl space-y-3 shadow-subtle">
             <h3 className="text-sm font-bold text-text-main flex items-center gap-1.5">
               <Truck className="w-4 h-4 text-primary" />
@@ -417,8 +482,8 @@ export function ListingDetailClient({
               <div className="flex items-start gap-2">
                 <Building className="w-4 h-4 text-text-muted shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-semibold text-text-main">Trường & Cơ sở: </span>
-                  {listing.schoolName} ({listing.campusName})
+                  <span className="font-semibold text-text-main">Trường: </span>
+                  {listing.schoolName} {listing.campusName ? `(${listing.campusName})` : ""}
                 </div>
               </div>
 
@@ -430,22 +495,38 @@ export function ListingDetailClient({
                 </div>
               </div>
 
-              {listing.shipping.allowSellerShip && (
+              {listing.shippingMethods?.sellerDelivery && listing.shippingMethods?.shipFeeNote && (
                 <div className="p-2.5 rounded-lg bg-surface-muted text-xs space-y-0.5">
-                  <span className="font-semibold text-text-main">Chính sách ship của người bán:</span>
-                  <p>{listing.shipping.shipFee}</p>
+                  <span className="font-semibold text-text-main">Ghi chú phí ship của người bán:</span>
+                  <p>{listing.shippingMethods.shipFeeNote}</p>
                 </div>
               )}
             </div>
           </div>
 
-          {/* MÔ TẢ & KHUYẾT ĐIỂM NỔI BẬT */}
+          {/* CẢNH BÁO XE CỘ NẾU THUỘC DANH MỤC XE CỘ */}
+          {listing.categoryId === "xe-co" && (
+            <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200 flex items-start gap-2">
+              <ShieldAlert className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+              <span>
+                <strong>Lưu ý giao dịch xe cộ:</strong> Không chuyển tiền cọc trước. Kiểm tra giấy tờ xe chính chủ và số khung trước khi thanh toán. Hẹn xem xe ở nơi công cộng.
+              </span>
+            </div>
+          )}
+
+          {/* MÔ TẢ & KHUYẾT ĐIỂM */}
           <div className="space-y-3">
             <h3 className="text-sm font-bold text-text-main">Chi tiết món đồ</h3>
-            <div className="p-3 bg-red-50/50 border border-red-200/60 rounded-xl text-xs text-red-900 dark:bg-red-950/30 dark:border-red-800 dark:text-red-200">
-              <span className="font-bold">Khuyết điểm đã biết: </span>
-              <span>{listing.defects}</span>
-            </div>
+            {listing.defects ? (
+              <div className="p-3 bg-red-50/50 border border-red-200/60 rounded-xl text-xs text-red-900 dark:bg-red-950/30 dark:border-red-800 dark:text-red-200">
+                <span className="font-bold">Khuyết điểm đã biết: </span>
+                <span>{listing.defects}</span>
+              </div>
+            ) : (
+              <div className="p-2.5 bg-green-50/50 border border-green-200/60 rounded-xl text-xs text-green-900 dark:bg-green-950/30 dark:border-green-800 dark:text-green-200">
+                <span>Món đồ hoạt động tốt, không có khuyết điểm đáng kể.</span>
+              </div>
+            )}
             <p className="text-xs sm:text-sm text-text-secondary leading-relaxed whitespace-pre-line">
               {listing.description}
             </p>
@@ -453,7 +534,7 @@ export function ListingDetailClient({
         </div>
       </div>
 
-      {/* MODAL GIỮ CHỖ GIAO DỊCH */}
+      {/* MODAL GIỮ CHỖ */}
       <Modal
         isOpen={isReserveModalOpen}
         onClose={() => setIsReserveModalOpen(false)}
@@ -482,6 +563,13 @@ export function ListingDetailClient({
           </div>
         ) : (
           <div className="space-y-4 text-xs">
+            {reserveError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-red-500" />
+                <span>{reserveError}</span>
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <label className="font-bold text-text-main block">
                 Phương thức nhận hàng mong muốn *
@@ -500,9 +588,9 @@ export function ListingDetailClient({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setReserveMethod("sellerShip")}
+                  onClick={() => setReserveMethod("sellerDelivery")}
                   className={`p-3 rounded-xl border text-center font-semibold transition-all ${
-                    reserveMethod === "sellerShip"
+                    reserveMethod === "sellerDelivery"
                       ? "border-primary bg-primary-light text-primary"
                       : "border-surface-border text-text-secondary hover:bg-surface-muted"
                   }`}
@@ -520,7 +608,7 @@ export function ListingDetailClient({
                 type="text"
                 value={preferredTime}
                 onChange={(e) => setPreferredTime(e.target.value)}
-                placeholder="Chiều mai 17h, Sáng thứ 7..."
+                placeholder="Ví dụ: Chiều mai 17h, Sáng thứ 7..."
                 className="w-full h-11 px-3 bg-surface border border-surface-border rounded-lg text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
@@ -541,6 +629,8 @@ export function ListingDetailClient({
               <Button
                 variant="urgent"
                 size="sm"
+                disabled={isSubmittingReserve}
+                isLoading={isSubmittingReserve}
                 onClick={handleConfirmReservation}
               >
                 Xác Nhận Gửi Yêu Cầu

@@ -1,215 +1,256 @@
 "use client";
 
 import * as React from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { Search, Filter, SlidersHorizontal, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { ListingCard } from "@/components/ui/ListingCard";
-import { SkeletonListingCard } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { UniversitySelect } from "@/components/ui/UniversitySelect";
-import {
-  Search as SearchIcon,
-  SlidersHorizontal,
-  X,
-  Zap,
-  Truck,
-  GraduationCap,
-} from "lucide-react";
 import categoriesData from "../../../data/categories.json";
 import provincesData from "../../../data/provinces_34.json";
+import type { PublicListingDTO } from "@/lib/services/listings";
+import { formatDeadlineVN } from "@/lib/utils/date";
 
-interface SearchCardItem {
-  id: string;
-  title: string;
-  price: number;
-  originalPrice?: number;
-  coverImage?: string;
-  images?: string[];
-  urgentPass?: boolean;
-  hasShipping?: boolean;
-  schoolCode?: string;
-  passDeadline?: string;
-  campusDelivery?: boolean;
-  condition?: string;
+function SkeletonListingCard() {
+  return (
+    <div className="bg-surface border border-surface-border rounded-2xl overflow-hidden shadow-card animate-pulse">
+      <div className="aspect-[4/3] bg-surface-muted w-full" />
+      <div className="p-3.5 space-y-2.5">
+        <div className="h-4 bg-surface-muted rounded w-2/3" />
+        <div className="h-5 bg-surface-muted rounded w-3/4" />
+        <div className="h-3 bg-surface-muted rounded w-1/2 pt-2" />
+      </div>
+    </div>
+  );
 }
 
 function SearchContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const { profile, user } = useAuth();
 
   const [query, setQuery] = React.useState(searchParams.get("q") || "");
-  const [selectedCategory, setSelectedCategory] = React.useState(
-    searchParams.get("category") || "all"
-  );
-  const [selectedSchool, setSelectedSchool] = React.useState(
-    searchParams.get("school") || "all"
-  );
-  const [selectedProvince, setSelectedProvince] = React.useState(
-    searchParams.get("province") || "all"
-  );
-  const [onlyUrgent, setOnlyUrgent] = React.useState(
-    searchParams.get("urgent") === "true"
-  );
-  const [onlyShipping, setOnlyShipping] = React.useState(
-    searchParams.get("shipping") === "true"
-  );
-  const [onlySameSchool, setOnlySameSchool] = React.useState(false);
-  const [sortBy, setSortBy] = React.useState(
-    searchParams.get("sort") || "relevant"
-  );
+  const [selectedCategory, setSelectedCategory] = React.useState(searchParams.get("category") || "all");
+  const [selectedSchool, setSelectedSchool] = React.useState(searchParams.get("school") || "all");
+  const [selectedProvince, setSelectedProvince] = React.useState(searchParams.get("province") || "all");
+  const [onlyUrgent, setOnlyUrgent] = React.useState(searchParams.get("urgent") === "true");
+  const [onlyShipping, setOnlyShipping] = React.useState(searchParams.get("shipping") === "true");
+  const [minPrice, setMinPrice] = React.useState(searchParams.get("minPrice") || "");
+  const [maxPrice, setMaxPrice] = React.useState(searchParams.get("maxPrice") || "");
+  const [sortBy, setSortBy] = React.useState(searchParams.get("sort") || "relevant");
 
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
-  const [items, setItems] = React.useState<SearchCardItem[]>([]);
+  const [fetchError, setFetchError] = React.useState<string | null>(null);
+  const [items, setItems] = React.useState<PublicListingDTO[]>([]);
 
-  // Thực hiện tìm kiếm
-  const performSearch = React.useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (query) params.set("q", query);
-      if (selectedCategory !== "all") params.set("category", selectedCategory);
-      if (selectedSchool !== "all") params.set("school", selectedSchool);
-      if (selectedProvince !== "all") params.set("province", selectedProvince);
-      if (onlyUrgent) params.set("urgent", "true");
-      if (onlyShipping) params.set("shipping", "true");
-      if (sortBy !== "relevant") params.set("sort", sortBy);
+  // Đồng bộ bộ lọc lên URL
+  const syncParamsToUrl = React.useCallback(() => {
+    const params = new URLSearchParams();
+    if (query.trim()) params.set("q", query.trim());
+    if (selectedCategory !== "all") params.set("category", selectedCategory);
+    if (selectedSchool !== "all") params.set("school", selectedSchool);
+    if (selectedProvince !== "all") params.set("province", selectedProvince);
+    if (onlyUrgent) params.set("urgent", "true");
+    if (onlyShipping) params.set("shipping", "true");
+    if (minPrice) params.set("minPrice", minPrice);
+    if (maxPrice) params.set("maxPrice", maxPrice);
+    if (sortBy !== "relevant") params.set("sort", sortBy);
 
-      let results: SearchCardItem[] = [];
+    const queryString = params.toString();
+    router.replace(queryString ? `/search?${queryString}` : "/search", { scroll: false });
+  }, [query, selectedCategory, selectedSchool, selectedProvince, onlyUrgent, onlyShipping, minPrice, maxPrice, sortBy, router]);
+
+  // Thực hiện tìm kiếm với AbortController
+  const performSearch = React.useCallback(
+    async (signal?: AbortSignal) => {
+      setIsLoading(true);
+      setFetchError(null);
+
       try {
-        const res = await fetch(`/api/listings/search?${params.toString()}`);
-        const data = await res.json();
-        results = data.items || [];
-      } catch {
-        // API offline
-      }
+        const params = new URLSearchParams();
+        if (query.trim()) params.set("q", query.trim());
+        if (selectedCategory !== "all") params.set("category", selectedCategory);
+        if (selectedSchool !== "all") params.set("school", selectedSchool);
+        if (selectedProvince !== "all") params.set("province", selectedProvince);
+        if (onlyUrgent) params.set("urgent", "true");
+        if (onlyShipping) params.set("shipping", "true");
+        if (minPrice) params.set("minPrice", minPrice);
+        if (maxPrice) params.set("maxPrice", maxPrice);
+        if (sortBy) params.set("sort", sortBy);
+        if (profile?.schoolCode) params.set("viewerSchool", profile.schoolCode);
+        if (profile?.provinceCode) params.set("viewerProvince", profile.provinceCode);
 
-      try {
-        const stored = localStorage.getItem("cho_pass_my_listings");
-        if (stored) {
-          const localList: SearchCardItem[] = JSON.parse(stored);
-          const filteredLocal = localList.filter((item) => {
-            if (query && !item.title.toLowerCase().includes(query.toLowerCase())) return false;
-            if (onlyUrgent && !item.urgentPass) return false;
-            return true;
-          });
-          results = [...filteredLocal, ...results];
+        const res = await fetch(`/api/listings/search?${params.toString()}`, { signal });
+        if (!res.ok) {
+          throw new Error("Lỗi khi tải kết quả tìm kiếm");
         }
-      } catch {
-        // ignore
+
+        const data = await res.json();
+        setItems(Array.isArray(data.items) ? data.items : []);
+      } catch (err: unknown) {
+        if ((err as Error).name !== "AbortError") {
+          console.error("Lỗi tìm kiếm:", err);
+          setFetchError("Không thể tải kết quả tìm kiếm. Vui lòng thử lại.");
+          setItems([]);
+        }
+      } finally {
+        setIsLoading(false);
       }
+    },
+    [query, selectedCategory, selectedSchool, selectedProvince, onlyUrgent, onlyShipping, minPrice, maxPrice, sortBy, profile]
+  );
 
-      setItems(results);
-    } catch {
-      setItems([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [query, selectedCategory, selectedSchool, selectedProvince, onlyUrgent, onlyShipping, sortBy]);
-
+  // Debounce tìm kiếm 300ms và hủy request cũ khi thay đổi input
   React.useEffect(() => {
-    performSearch();
-  }, [performSearch]);
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      syncParamsToUrl();
+      performSearch(controller.signal);
+    }, 300);
 
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    performSearch();
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [syncParamsToUrl, performSearch]);
+
+  const handleToggleSameSchool = () => {
+    if (!user) {
+      router.push("/auth/login?next=/search");
+      return;
+    }
+    if (selectedSchool === profile?.schoolCode) {
+      setSelectedSchool("all");
+    } else if (profile?.schoolCode) {
+      setSelectedSchool(profile.schoolCode);
+    }
+  };
+
+  const getProximity = (item: PublicListingDTO): "sameSchool" | "sameCity" | "nationwide" => {
+    if (profile?.schoolCode && item.schoolCode === profile.schoolCode) {
+      return "sameSchool";
+    }
+    if (profile?.provinceCode && item.provinceCode === profile.provinceCode) {
+      return "sameCity";
+    }
+    return "nationwide";
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-      {/* Thanh tìm kiếm & Nút mở bộ lọc mobile */}
-      <form onSubmit={handleSearchSubmit} className="flex gap-2">
-        <div className="flex-1 relative">
+    <div className="max-w-6xl mx-auto px-4 py-4 sm:py-6 space-y-6">
+      {/* KHỐI TÌM KIẾM CHÍNH */}
+      <div className="flex flex-col sm:flex-row gap-2.5">
+        <div className="relative flex-1">
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Tìm quạt đứng, nồi cơm, giáo trình giải tích..."
-            leftIcon={<SearchIcon className="w-4 h-4" />}
-            className="h-12 text-sm"
+            placeholder="Tìm theo tên món đồ, hãng sản xuất, mã model..."
+            leftIcon={<Search className="w-4 h-4 text-text-muted" />}
+            className="h-11"
           />
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          className="h-12 px-3.5 shrink-0 flex items-center gap-1.5"
-          onClick={() => setIsFilterDrawerOpen(!isFilterDrawerOpen)}
-        >
-          <SlidersHorizontal className="w-4 h-4" />
-          <span className="hidden sm:inline">Bộ lọc</span>
-        </Button>
-        <Button type="submit" variant="primary" className="h-12 px-5 shrink-0">
-          Tìm
-        </Button>
-      </form>
 
-      {/* Chip bộ lọc nhanh */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
+        <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => setIsFilterDrawerOpen(!isFilterDrawerOpen)}
+            leftIcon={<SlidersHorizontal className="w-4 h-4" />}
+            className="sm:w-auto"
+          >
+            Bộ lọc nâng cao
+          </Button>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="h-11 px-3 bg-surface border border-surface-border rounded-xl text-xs sm:text-sm font-semibold text-text-main focus:outline-none focus:ring-2 focus:ring-primary shadow-subtle cursor-pointer"
+          >
+            <option value="relevant">Phù hợp nhất</option>
+            <option value="newest">Mới đăng nhất</option>
+            <option value="price_asc">Giá tăng dần</option>
+            <option value="price_desc">Giá giảm dần</option>
+          </select>
+        </div>
+      </div>
+
+      {/* CHIP LỌC NHANH */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs no-scrollbar">
         <button
           type="button"
           onClick={() => setOnlyUrgent(!onlyUrgent)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-all ${
+          className={`px-3 py-1.5 rounded-full border transition-all font-semibold shrink-0 cursor-pointer ${
             onlyUrgent
-              ? "bg-urgent-solid text-white border-urgent-solid shadow-sm font-bold"
-              : "bg-surface border-surface-border text-text-secondary hover:border-primary"
+              ? "bg-urgent-solid text-white border-urgent-solid shadow-sm"
+              : "bg-surface text-text-secondary border-surface-border hover:border-primary"
           }`}
         >
-          <Zap className="w-3.5 h-3.5 fill-current" />
-          <span>Pass trong ngày</span>
+          ⚡ Pass trong ngày
         </button>
 
         <button
           type="button"
           onClick={() => setOnlyShipping(!onlyShipping)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-all ${
+          className={`px-3 py-1.5 rounded-full border transition-all font-semibold shrink-0 cursor-pointer ${
             onlyShipping
-              ? "bg-primary text-white border-primary shadow-sm font-bold"
-              : "bg-surface border-surface-border text-text-secondary hover:border-primary"
+              ? "bg-primary text-white border-primary shadow-sm"
+              : "bg-surface text-text-secondary border-surface-border hover:border-primary"
           }`}
         >
-          <Truck className="w-3.5 h-3.5" />
-          <span>Có hỗ trợ ship</span>
+          🚚 Có ship đồ
         </button>
 
         <button
           type="button"
-          onClick={() => setOnlySameSchool(!onlySameSchool)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-all ${
-            onlySameSchool
-              ? "bg-primary text-white border-primary shadow-sm font-bold"
-              : "bg-surface border-surface-border text-text-secondary hover:border-primary"
+          onClick={handleToggleSameSchool}
+          className={`px-3 py-1.5 rounded-full border transition-all font-semibold shrink-0 cursor-pointer ${
+            selectedSchool !== "all" && selectedSchool === profile?.schoolCode
+              ? "bg-primary text-white border-primary shadow-sm"
+              : "bg-surface text-text-secondary border-surface-border hover:border-primary"
           }`}
         >
-          <GraduationCap className="w-3.5 h-3.5" />
-          <span>Chỉ trường của tôi</span>
+          🎓 Chỉ trường của tôi
         </button>
       </div>
 
-      {/* Khung Bộ Lọc Mở Rộng */}
+      {/* BỘ LỌC CHI TIẾT */}
       {isFilterDrawerOpen && (
-        <div className="p-4 sm:p-5 bg-surface border border-surface-border rounded-2xl shadow-card space-y-4 animate-in fade-in duration-200">
+        <div className="p-4 bg-surface border border-surface-border rounded-2xl shadow-card space-y-4">
           <div className="flex items-center justify-between border-b border-surface-border pb-3">
             <h3 className="text-sm font-bold text-text-main flex items-center gap-2">
-              <SlidersHorizontal className="w-4 h-4 text-primary" />
-              <span>Tùy Chọn Lọc & Sắp Xếp Nâng Cao</span>
+              <Filter className="w-4 h-4 text-primary" />
+              <span>Bộ lọc chi tiết</span>
             </h3>
             <button
-              onClick={() => setIsFilterDrawerOpen(false)}
-              className="text-text-muted hover:text-text-main"
+              type="button"
+              onClick={() => {
+                setSelectedCategory("all");
+                setSelectedSchool("all");
+                setSelectedProvince("all");
+                setOnlyUrgent(false);
+                setOnlyShipping(false);
+                setMinPrice("");
+                setMaxPrice("");
+                setSortBy("relevant");
+              }}
+              className="text-xs text-text-muted hover:text-primary transition-colors cursor-pointer"
             >
-              <X className="w-4 h-4" />
+              Đặt lại bộ lọc
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-            {/* Lọc danh mục */}
-            <div className="space-y-1.5">
-              <label className="font-semibold text-text-main">Danh mục</label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-text-secondary">Danh mục</label>
               <select
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
-                className="w-full h-10 px-2.5 bg-surface border border-surface-border rounded-lg text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
+                className="w-full h-10 px-3 bg-surface border border-surface-border rounded-lg text-xs text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="all">Tất cả danh mục</option>
                 {categoriesData.map((c) => (
@@ -220,15 +261,23 @@ function SearchContent() {
               </select>
             </div>
 
-            {/* Lọc tỉnh thành */}
-            <div className="space-y-1.5">
-              <label className="font-semibold text-text-main">Tỉnh / Thành phố</label>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-text-secondary">Trường đại học / CĐ</label>
+              <UniversitySelect
+                value={selectedSchool}
+                onChange={(code) => setSelectedSchool(code)}
+                placeholder="Chọn trường đại học..."
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-text-secondary">Tỉnh / Thành phố</label>
               <select
                 value={selectedProvince}
                 onChange={(e) => setSelectedProvince(e.target.value)}
-                className="w-full h-10 px-2.5 bg-surface border border-surface-border rounded-lg text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
+                className="w-full h-10 px-3 bg-surface border border-surface-border rounded-lg text-xs text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                <option value="all">Toàn quốc (34 tỉnh/thành)</option>
+                <option value="all">Toàn quốc</option>
                 {provincesData.map((p) => (
                   <option key={p.code} value={p.code}>
                     {p.name}
@@ -236,58 +285,23 @@ function SearchContent() {
                 ))}
               </select>
             </div>
-
-            {/* Lọc trường */}
-            <UniversitySelect
-              value={selectedSchool}
-              onChange={(code) => setSelectedSchool(code)}
-              label="Trường Đại học"
-              allowAll={true}
-              allLabel="Tất cả các trường toàn quốc"
-              placeholder="Gõ tìm trường (vd: FPT, BK, HUST...)"
-            />
-
-            {/* Sắp xếp */}
-            <div className="space-y-1.5">
-              <label className="font-semibold text-text-main">Sắp xếp theo</label>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                className="w-full h-10 px-2.5 bg-surface border border-surface-border rounded-lg text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="relevant">Phù hợp nhất (ưu tiên cùng trường)</option>
-                <option value="newest">Mới đăng nhất</option>
-                <option value="price_asc">Giá: Thấp đến cao</option>
-                <option value="price_desc">Giá: Cao đến thấp</option>
-              </select>
-            </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-surface-border">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setSelectedCategory("all");
-                setSelectedSchool("all");
-                setSelectedProvince("all");
-                setOnlyUrgent(false);
-                setOnlyShipping(false);
-                setSortBy("relevant");
-              }}
-            >
-              Đặt lại bộ lọc
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => {
-                performSearch();
-                setIsFilterDrawerOpen(false);
-              }}
-            >
-              Áp dụng
-            </Button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+            <Input
+              label="Giá tối thiểu (VNĐ)"
+              type="number"
+              placeholder="Ví dụ: 50000"
+              value={minPrice}
+              onChange={(e) => setMinPrice(e.target.value)}
+            />
+            <Input
+              label="Giá tối đa (VNĐ)"
+              type="number"
+              placeholder="Ví dụ: 1000000"
+              value={maxPrice}
+              onChange={(e) => setMaxPrice(e.target.value)}
+            />
           </div>
         </div>
       )}
@@ -298,13 +312,31 @@ function SearchContent() {
           <span className="text-xs font-semibold text-text-secondary">
             Tìm thấy {items.length} món đồ phù hợp
           </span>
-          <Badge variant="near">Toàn quốc</Badge>
+          <Badge variant="near">
+            {selectedSchool !== "all"
+              ? "Lọc theo trường"
+              : selectedProvince !== "all"
+              ? "Lọc theo tỉnh thành"
+              : "Toàn quốc"}
+          </Badge>
         </div>
 
+        {fetchError && (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center justify-between gap-3">
+            <span>{fetchError}</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => performSearch()}
+              leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
+            >
+              Thử lại
+            </Button>
+          </div>
+        )}
+
         {isLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            <SkeletonListingCard />
-            <SkeletonListingCard />
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
             <SkeletonListingCard />
             <SkeletonListingCard />
             <SkeletonListingCard />
@@ -314,11 +346,11 @@ function SearchContent() {
           <EmptyState
             title="Không tìm thấy món đồ nào phù hợp với bộ lọc"
             description="Hãy thử đổi từ khóa tìm kiếm hoặc mở rộng phạm vi sang toàn quốc nhé!"
-            actionText="Đăng món đồ đầu tiên của trường bạn"
+            actionLabel="Đăng món đồ đầu tiên của trường bạn"
             actionHref="/listings/new"
           />
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
             {items.map((item) => (
               <ListingCard
                 key={item.id}
@@ -326,13 +358,16 @@ function SearchContent() {
                 title={item.title}
                 price={item.price}
                 originalPrice={item.originalPrice}
-                imageUrl={item.coverImage || item.images?.[0]}
+                imageUrl={item.coverThumb || item.coverImage}
                 urgent={item.urgentPass}
-                hasShipping={item.hasShipping}
-                schoolName={item.schoolCode || "ĐH Bách Khoa TP.HCM"}
-                passDeadline={item.urgentPass ? "Hôm nay" : item.passDeadline || "Gấp"}
-                proximity="sameSchool"
-                campusDelivery={item.campusDelivery}
+                hasShipping={
+                  item.shippingMethods?.sellerDelivery ||
+                  item.shippingMethods?.carrierShipping
+                }
+                schoolName={item.schoolName || item.schoolCode || "Sinh viên"}
+                passDeadline={formatDeadlineVN(item.passDeadline)}
+                proximity={getProximity(item)}
+                campusDelivery={item.shippingMethods?.campusDelivery}
                 condition={item.condition}
               />
             ))}

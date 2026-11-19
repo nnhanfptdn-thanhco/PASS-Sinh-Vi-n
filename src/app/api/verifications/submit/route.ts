@@ -1,97 +1,142 @@
+import "server-only";
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser, errorResponse } from "@/lib/auth/server";
-import { adminDb, computeStudentIdHash, FieldValue } from "@/lib/firebase/admin";
-import { z } from "zod";
+import { requireAuth } from "@/lib/server/auth-guard";
+import { readJson, withApi, ApiError } from "@/lib/server/http";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
+import { submitVerificationSchema } from "@/lib/server/schemas";
+import { adminDb, adminStorage, computeStudentIdHash, FieldValue } from "@/lib/firebase/admin";
+import { isStudentEmail } from "@/lib/auth/student-email";
+import universitiesData from "@/data/universities_vietnam.json";
 
-const submitVerificationSchema = z.object({
-  realName: z.string().min(2, "Họ và tên phải từ 2 ký tự trở lên"),
-  displayName: z.string().min(2, "Tên hiển thị phải từ 2 ký tự trở lên"),
-  schoolCode: z.string().min(1, "Vui lòng chọn trường học"),
-  campusId: z.string().optional(),
-  faculty: z.string().optional(),
-  studentClass: z.string().optional(),
-  studentId: z.string().min(4, "Mã số sinh viên không hợp lệ"),
-  zaloPhone: z.string().regex(/^(0|\+84)[3|5|7|8|9][0-9]{8}$/, "Số điện thoại Zalo không hợp lệ"),
-  altPhone: z.string().optional(),
-  provinceCode: z.string().optional(),
-  wardCode: z.string().optional(),
-  dormOrAddress: z.string().optional(),
-  isGraduating: z.boolean().optional(),
-  cardStoragePath: z.string().min(1, "Thiếu đường dẫn tệp ảnh thẻ"),
-});
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest) {
-  try {
-    const token = await requireUser(req);
-    const userId = token.uid;
-    const userEmail = token.email || "";
+export const POST = withApi(async (req: NextRequest) => {
+  // 1. Xác thực tài khoản đăng nhập
+  const auth = await requireAuth(req);
+  const userId = auth.uid;
+  const userEmail = auth.email || "";
 
-    const body = await req.json();
-    const parsed = submitVerificationSchema.safeParse(body);
+  // 2. Giới hạn tần suất: Tối đa 3 lần nộp hồ sơ / ngày
+  await consumeRateLimit({
+    scope: "submit_verification",
+    key: userId,
+    limit: 3,
+    windowSec: 24 * 3600,
+    customMessage: "Bạn đã nộp hồ sơ 3 lần trong hôm nay. Vui lòng đợi Ban Quản Trị xét duyệt.",
+  });
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.issues.map((i) => i.message).join(", ") },
-        { status: 400 }
-      );
-    }
+  // 3. Đọc dữ liệu gửi lên
+  const body = await readJson(req);
+  const data = submitVerificationSchema.parse(body);
 
-    const data = parsed.data;
-
-    // 1. Kiểm tra trạng thái hiện tại: Chặn nộp lại nếu đang 'pending' hoặc đã 'approved'
-    const verificationRef = adminDb.collection("verifications").doc(userId);
-    const existingVerifSnap = await verificationRef.get();
-
-    if (existingVerifSnap.exists) {
-      const currentStatus = existingVerifSnap.data()?.status;
-      if (currentStatus === "approved") {
-        return NextResponse.json(
-          { error: "Tài khoản của bạn đã được xác minh thẻ sinh viên thành công trước đó." },
-          { status: 400 }
-        );
-      }
-      if (currentStatus === "pending") {
-        return NextResponse.json(
-          { error: "Hồ sơ của bạn đang được xét duyệt. Vui lòng chờ phản hồi từ Ban Quản Trị." },
-          { status: 400 }
-        );
-      }
-    }
-
-    // 2. Tính mã băm HMAC-SHA256 kết hợp mã trường và MSSV
-    const studentIdHash = computeStudentIdHash(data.schoolCode, data.studentId);
-
-    // 3. Chống đăng ký trùng thẻ: kiểm tra mã băm trong Firestore
-    const existingSnap = await adminDb
-      .collection("verifications")
-      .where("studentIdHash", "==", studentIdHash)
-      .where("status", "in", ["approved", "pending"])
-      .get();
-
-    // Nếu tìm thấy và không phải của chính user này
-    const isDuplicate = existingSnap.docs.some((doc) => doc.id !== userId);
-    if (isDuplicate) {
-      return NextResponse.json(
-        {
-          error:
-            "Mã thẻ sinh viên này đã được đăng ký trên hệ thống. Một thẻ sinh viên chỉ được gắn với một tài khoản duy nhất.",
-        },
-        { status: 409 }
-      );
-    }
-
-    // 4. Kiểm tra email trường (.edu.vn) VÀ email đã được verify bởi Google
-    const isEduEmail = Boolean(
-      token.email_verified &&
-      userEmail.toLowerCase().endsWith(".edu.vn")
+  // 4. Kiểm tra đường dẫn ảnh thẻ phải thuộc thư mục riêng tư của chính người dùng
+  const expectedPrefix = `private/cards/${userId}/`;
+  if (!data.cardStoragePath.startsWith(expectedPrefix)) {
+    throw new ApiError(
+      400,
+      "INVALID_CARD_PATH",
+      "Tệp ảnh thẻ sinh viên không hợp lệ hoặc không thuộc tài khoản của bạn."
     );
+  }
 
-    // 5. Lưu vào collection verifications (Chỉ lưu đường dẫn Storage, tuyệt đối không lưu base64)
-    await verificationRef.set({
+  // Kiểm tra file tồn tại trên Storage nếu không ở mock mode
+  try {
+    const bucket = adminStorage.bucket();
+    const file = bucket.file(data.cardStoragePath);
+    const [exists] = await file.exists();
+    if (!exists && process.env.NODE_ENV === "production") {
+      throw new ApiError(
+        400,
+        "CARD_FILE_NOT_FOUND",
+        "Không tìm thấy tệp ảnh thẻ sinh viên trên hệ thống lưu trữ. Vui lòng tải lại ảnh."
+      );
+    }
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    // Bỏ qua lỗi kết nối bucket trong môi trường test/local nếu bucket chưa khởi tạo
+  }
+
+  // 5. Kiểm tra trường học và campus
+  const matchedSchool = (universitiesData as Array<{
+    code: string;
+    name: string;
+    campuses: Array<{ id: string; name: string }>;
+  }>).find((u) => u.code === data.schoolCode);
+
+  if (!matchedSchool) {
+    throw new ApiError(400, "INVALID_SCHOOL", "Trường đại học không tồn tại trong hệ thống.");
+  }
+
+  if (data.campusId) {
+    const validCampus = matchedSchool.campuses.some((c) => c.id === data.campusId);
+    if (!validCampus) {
+      throw new ApiError(400, "INVALID_CAMPUS", "Cơ sở trường không hợp lệ.");
+    }
+  }
+
+  // 6. Kiểm tra trạng thái hiện tại của hồ sơ
+  const verifRef = adminDb.collection("verifications").doc(userId);
+  const currentVerif = await verifRef.get();
+
+  if (currentVerif.exists) {
+    const status = currentVerif.data()?.status;
+    if (status === "approved") {
+      throw new ApiError(
+        400,
+        "ALREADY_VERIFIED",
+        "Tài khoản của bạn đã được xác minh thẻ sinh viên thành công trước đó."
+      );
+    }
+    if (status === "pending") {
+      throw new ApiError(
+        400,
+        "VERIFICATION_PENDING",
+        "Hồ sơ của bạn đang được xét duyệt. Vui lòng chờ phản hồi từ Ban Quản Trị."
+      );
+    }
+  }
+
+  // 7. Tính mã băm HMAC-SHA256
+  const studentIdHash = computeStudentIdHash(data.schoolCode, data.studentId);
+  const hashLockRef = adminDb.collection("studentIdHashes").doc(studentIdHash);
+
+  // 8. Transaction: Khóa chống trùng thẻ sinh viên bằng document key duy nhất
+  await adminDb.runTransaction(async (transaction) => {
+    const hashDoc = await transaction.get(hashLockRef);
+
+    if (hashDoc.exists) {
+      const existingOwner = hashDoc.data()?.userId;
+      if (existingOwner && existingOwner !== userId) {
+        throw new ApiError(
+          409,
+          "STUDENT_ID_CONFLICT",
+          "Thông tin thẻ sinh viên này không thể dùng để xác minh. Vui lòng liên hệ hỗ trợ."
+        );
+      }
+    }
+
+    const { isValid: isEduEmail } = isStudentEmail({
+      email: userEmail,
+      emailVerified: auth.token.email_verified,
+    });
+
+    // Ghi nhận khóa băm duy nhất
+    transaction.set(hashLockRef, {
+      studentIdHash,
+      userId,
+      schoolCode: data.schoolCode,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    // Lưu hồ sơ xác minh (Private)
+    transaction.set(verifRef, {
       userId,
       userEmail,
       realName: data.realName,
+      displayName: data.displayName,
       schoolCode: data.schoolCode,
+      schoolName: matchedSchool.name,
       campusId: data.campusId || null,
       faculty: data.faculty || null,
       studentClass: data.studentClass || null,
@@ -107,26 +152,14 @@ export async function POST(req: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    // 6. Lưu vào collection usersPrivate (chỉ chủ tài khoản và admin đọc được)
-    await adminDb.collection("usersPrivate").doc(userId).set(
-      {
-        realName: data.realName,
-        zaloPhone: data.zaloPhone,
-        altPhone: data.altPhone || null,
-        email: userEmail,
-        provinceCode: data.provinceCode || null,
-        wardCode: data.wardCode || null,
-        dormOrAddress: data.dormOrAddress || null,
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-
-    // 7. Cập nhật hồ sơ công khai trong collection users
-    await adminDb.collection("users").doc(userId).set(
+    // Lưu vào users & usersPrivate
+    const userRef = adminDb.collection("users").doc(userId);
+    transaction.set(
+      userRef,
       {
         displayName: data.displayName,
         schoolCode: data.schoolCode,
+        schoolName: matchedSchool.name,
         campusId: data.campusId || null,
         provinceCode: data.provinceCode || null,
         wardCode: data.wardCode || null,
@@ -136,11 +169,27 @@ export async function POST(req: NextRequest) {
       { merge: true }
     );
 
-    return NextResponse.json({
+    const userPrivateRef = adminDb.collection("usersPrivate").doc(userId);
+    transaction.set(
+      userPrivateRef,
+      {
+        realName: data.realName,
+        zaloPhone: data.zaloPhone,
+        altPhone: data.altPhone || null,
+        schoolCode: data.schoolCode,
+        campusId: data.campusId || null,
+        dormOrAddress: data.dormOrAddress || null,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  });
+
+  return NextResponse.json(
+    {
       success: true,
-      message: "Hồ sơ xác minh đã được gửi duyệt thành công.",
-    });
-  } catch (err) {
-    return errorResponse(err);
-  }
-}
+      message: "Hồ sơ xác minh đã được gửi thành công và đang chờ Ban Quản Trị duyệt!",
+    },
+    { status: 200 }
+  );
+});

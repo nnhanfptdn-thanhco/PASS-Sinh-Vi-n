@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser, errorResponse, HttpError } from "@/lib/auth/server";
-import { adminAuth, adminDb, adminStorage } from "@/lib/firebase/admin";
+import { requireUser, HttpError } from "@/lib/auth/server";
+import { adminAuth, adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,17 +19,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Kiểm tra xem người dùng còn giao dịch confirmed nào chưa hoàn tất không
-    const activeConfirmedSnap = await adminDb
-      .collection("reservations")
-      .where("status", "==", "confirmed")
-      .get();
+    // 1. Kiểm tra hai truy vấn độc lập theo buyerId và sellerId (WP-6.4: không quét cả collection)
+    const [buyerConfirmedSnap, sellerConfirmedSnap] = await Promise.all([
+      adminDb
+        .collection("reservations")
+        .where("buyerId", "==", userId)
+        .where("status", "==", "confirmed")
+        .get(),
+      adminDb
+        .collection("reservations")
+        .where("sellerId", "==", userId)
+        .where("status", "==", "confirmed")
+        .get(),
+    ]);
 
-    const hasActiveDeal = activeConfirmedSnap.docs.some(
-      (doc) => doc.data().buyerId === userId || doc.data().sellerId === userId
-    );
-
-    if (hasActiveDeal) {
+    if (!buyerConfirmedSnap.empty || !sellerConfirmedSnap.empty) {
       return NextResponse.json(
         {
           error:
@@ -37,7 +43,61 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Xóa các tin đăng của người dùng
+    // 2. Hủy các yêu cầu giữ chỗ còn mở (pending / waitlisted) và thông báo đối tác
+    const [buyerOpenSnap, sellerOpenSnap] = await Promise.all([
+      adminDb
+        .collection("reservations")
+        .where("buyerId", "==", userId)
+        .where("status", "in", ["pending", "waitlisted"])
+        .get(),
+      adminDb
+        .collection("reservations")
+        .where("sellerId", "==", userId)
+        .where("status", "in", ["pending", "waitlisted"])
+        .get(),
+    ]);
+
+    const resCancelBatch = adminDb.batch();
+    for (const doc of buyerOpenSnap.docs) {
+      resCancelBatch.update(doc.ref, {
+        status: "cancelled",
+        cancelledBy: "system",
+        cancelReason: "Tài khoản người mua đã được xóa",
+        cancelledAt: FieldValue.serverTimestamp(),
+      });
+      const notifRef = adminDb.collection("notifications").doc();
+      resCancelBatch.set(notifRef, {
+        userId: doc.data().sellerId,
+        type: "reservation_cancelled",
+        title: "Yêu cầu giữ chỗ đã bị hủy",
+        body: "Người mua đã xóa tài khoản trên hệ thống.",
+        targetId: doc.id,
+        read: false,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
+
+    for (const doc of sellerOpenSnap.docs) {
+      resCancelBatch.update(doc.ref, {
+        status: "cancelled",
+        cancelledBy: "system",
+        cancelReason: "Tài khoản người bán đã được xóa",
+        cancelledAt: FieldValue.serverTimestamp(),
+      });
+      const notifRef = adminDb.collection("notifications").doc();
+      resCancelBatch.set(notifRef, {
+        userId: doc.data().buyerId,
+        type: "reservation_cancelled",
+        title: "Yêu cầu giữ chỗ đã bị hủy",
+        body: "Người bán đã xóa tài khoản trên hệ thống.",
+        targetId: doc.id,
+        read: false,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
+    await resCancelBatch.commit();
+
+    // 3. Xóa các tin đăng của người dùng
     const listingsSnap = await adminDb
       .collection("listings")
       .where("sellerId", "==", userId)
@@ -49,10 +109,14 @@ export async function POST(req: NextRequest) {
       batch.delete(adminDb.collection("listingsPrivate").doc(doc.id));
     }
 
-    // 3. Xóa hồ sơ công khai, riêng tư, và thông báo
-    batch.delete(adminDb.collection("users").doc(userId));
-    batch.delete(adminDb.collection("usersPrivate").doc(userId));
-    batch.delete(adminDb.collection("verifications").doc(userId));
+    // 4. Xóa yêu thích (favorites) và thông báo
+    const favoritesSnap = await adminDb
+      .collection("favorites")
+      .where("userId", "==", userId)
+      .get();
+    for (const doc of favoritesSnap.docs) {
+      batch.delete(doc.ref);
+    }
 
     const notifSnap = await adminDb
       .collection("notifications")
@@ -62,9 +126,14 @@ export async function POST(req: NextRequest) {
       batch.delete(doc.ref);
     }
 
+    // 5. Xóa hồ sơ công khai, riêng tư, và xác minh
+    batch.delete(adminDb.collection("users").doc(userId));
+    batch.delete(adminDb.collection("usersPrivate").doc(userId));
+    batch.delete(adminDb.collection("verifications").doc(userId));
+
     await batch.commit();
 
-    // 4. Ẩn danh hóa các đánh giá đã gửi
+    // 6. Ẩn danh hóa các đánh giá đã gửi
     const reviewsSnap = await adminDb
       .collection("reviews")
       .where("reviewerId", "==", userId)
@@ -78,16 +147,19 @@ export async function POST(req: NextRequest) {
     }
     await reviewBatch.commit();
 
-    // 5. Xóa tệp Cloud Storage của user (ảnh thẻ, avatar)
+    // 7. Xóa toàn bộ tệp Cloud Storage (ảnh thẻ, ảnh tin đăng, avatar)
     try {
       const bucket = adminStorage.bucket();
-      await bucket.deleteFiles({ prefix: `private/cards/${userId}/`, force: true });
-      await bucket.deleteFiles({ prefix: `public/avatars/${userId}/`, force: true });
+      await Promise.all([
+        bucket.deleteFiles({ prefix: `private/cards/${userId}/`, force: true }).catch(() => {}),
+        bucket.deleteFiles({ prefix: `public/listings/${userId}/`, force: true }).catch(() => {}),
+        bucket.deleteFiles({ prefix: `public/avatars/${userId}/`, force: true }).catch(() => {}),
+      ]);
     } catch {
       // Tiếp tục nếu thư mục storage trống
     }
 
-    // 6. Xóa người dùng trong Firebase Auth
+    // 8. Xóa tài khoản Firebase Auth
     try {
       await adminAuth.deleteUser(userId);
     } catch (authErr) {
@@ -100,6 +172,13 @@ export async function POST(req: NextRequest) {
         "Tài khoản và toàn bộ dữ liệu cá nhân của bạn đã được xóa hoàn toàn khỏi hệ thống.",
     });
   } catch (err) {
-    return errorResponse(err);
+    if (err instanceof HttpError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    console.error("Lỗi xóa tài khoản:", err);
+    return NextResponse.json(
+      { error: "Đã xảy ra lỗi khi xóa tài khoản. Vui lòng thử lại sau." },
+      { status: 500 }
+    );
   }
 }

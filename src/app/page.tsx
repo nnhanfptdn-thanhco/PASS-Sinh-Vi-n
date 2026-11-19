@@ -1,8 +1,6 @@
 import * as React from "react";
 import Link from "next/link";
 import {
-  Search,
-  MapPin,
   GraduationCap,
   BookOpen,
   Tv,
@@ -11,12 +9,18 @@ import {
   Armchair,
   Layers,
   ArrowRight,
+  MapPin,
 } from "lucide-react";
-import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { HomeFeed } from "@/components/home/HomeFeed";
+import { HomeSearchBar } from "@/components/home/HomeSearchBar";
+import { searchListings } from "@/lib/services/listings";
 
-export default function HomePage() {
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const initialData = await searchListings({ sort: "newest", limit: 12 });
+
   const categories = [
     { name: "Điện máy", icon: Tv, slug: "dien-may" },
     { name: "Sách & Giáo trình", icon: BookOpen, slug: "giao-trinh" },
@@ -38,7 +42,7 @@ export default function HomePage() {
             <h4 className="text-sm sm:text-base font-heading font-bold text-text-main flex items-center gap-2">
               Chào mừng bạn đến với Chợ Pass Sinh Viên!
               <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-full bg-verified-bg text-verified-text border border-verified-border">
-                Uy tín 100%
+                Xác thực sinh viên
               </span>
             </h4>
             <p className="text-xs text-text-secondary mt-0.5">
@@ -59,7 +63,7 @@ export default function HomePage() {
       <section className="text-center space-y-4 pt-2 pb-4">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface border border-surface-border text-xs font-semibold text-text-secondary shadow-subtle">
           <GraduationCap className="w-4 h-4 text-primary" />
-          <span>Chợ đồ cũ sinh viên toàn quốc · 100% Thẻ SV xác thực</span>
+          <span>Chợ đồ cũ sinh viên toàn quốc · Thẻ SV đã duyệt</span>
         </div>
 
         <h1 className="text-2xl sm:text-4xl font-heading font-extrabold tracking-tight text-text-main max-w-2xl mx-auto">
@@ -70,19 +74,7 @@ export default function HomePage() {
         </p>
 
         {/* Thanh tìm kiếm trung tâm */}
-        <div className="max-w-2xl mx-auto mt-4">
-          <div className="relative flex items-center bg-surface border-2 border-primary/40 focus-within:border-primary rounded-2xl shadow-card p-1.5 transition-all">
-            <Search className="w-5 h-5 text-text-muted ml-3 shrink-0" />
-            <input
-              type="text"
-              placeholder="Tìm quạt đứng, nồi cơm, giáo trình giải tích..."
-              className="w-full bg-transparent px-3 py-2 text-sm text-text-main placeholder:text-text-muted focus:outline-none"
-            />
-            <Button variant="primary" size="md" className="rounded-xl shrink-0">
-              Tìm kiếm
-            </Button>
-          </div>
-        </div>
+        <HomeSearchBar />
 
         {/* Lối chọn nhanh khu vực */}
         <div className="flex items-center justify-center gap-2 text-xs text-text-secondary flex-wrap pt-1">
@@ -90,18 +82,27 @@ export default function HomePage() {
             <MapPin className="w-3.5 h-3.5 text-primary" />
             <span>Khu vực ưu tiên:</span>
           </span>
-          <button className="px-2.5 py-1 rounded-full bg-surface border border-surface-border font-medium hover:border-primary transition-colors">
+          <Link
+            href="/search?province=79"
+            className="px-2.5 py-1 rounded-full bg-surface border border-surface-border font-medium hover:border-primary transition-colors"
+          >
             TP. Hồ Chí Minh
-          </button>
-          <button className="px-2.5 py-1 rounded-full bg-surface border border-surface-border font-medium hover:border-primary transition-colors">
+          </Link>
+          <Link
+            href="/search?province=01"
+            className="px-2.5 py-1 rounded-full bg-surface border border-surface-border font-medium hover:border-primary transition-colors"
+          >
             Hà Nội
-          </button>
-          <button className="px-2.5 py-1 rounded-full bg-surface border border-surface-border font-medium hover:border-primary transition-colors">
+          </Link>
+          <Link
+            href="/search?province=48"
+            className="px-2.5 py-1 rounded-full bg-surface border border-surface-border font-medium hover:border-primary transition-colors"
+          >
             Đà Nẵng
-          </button>
-          <button className="text-primary font-semibold hover:underline">
+          </Link>
+          <Link href="/search" className="text-primary font-semibold hover:underline">
             Đổi tỉnh/thành khác &rarr;
-          </button>
+          </Link>
         </div>
       </section>
 
@@ -135,36 +136,48 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Bộ lọc nhanh */}
+      {/* Bộ lọc nhanh dạng Link */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
-        <Badge variant="urgent" className="cursor-pointer py-1.5 px-3">
-          ⚡ Pass trong ngày
-        </Badge>
-        <Badge variant="ship" className="cursor-pointer py-1.5 px-3">
-          🚚 Có ship
-        </Badge>
-        <Badge variant="sameSchool" className="cursor-pointer py-1.5 px-3">
-          🎓 Cùng trường của tôi
-        </Badge>
-        <Badge variant="pickup" className="cursor-pointer py-1.5 px-3">
-          📍 Tự đến lấy
-        </Badge>
+        <Link href="/search?urgent=true">
+          <Badge variant="urgent" className="cursor-pointer py-1.5 px-3">
+            ⚡ Pass trong ngày
+          </Badge>
+        </Link>
+        <Link href="/search?shipping=true">
+          <Badge variant="ship" className="cursor-pointer py-1.5 px-3">
+            🚚 Có ship
+          </Badge>
+        </Link>
+        <Link href="/search">
+          <Badge variant="sameSchool" className="cursor-pointer py-1.5 px-3">
+            🎓 Cùng trường của tôi
+          </Badge>
+        </Link>
+        <Link href="/search">
+          <Badge variant="pickup" className="cursor-pointer py-1.5 px-3">
+            📍 Tự đến lấy
+          </Badge>
+        </Link>
       </div>
 
-      {/* Danh sách tin đăng: Chuẩn trạng thái Empty State theo SPEC */}
+      {/* Danh sách tin đăng */}
       <section className="space-y-4 pt-4 border-t border-surface-border">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-base font-bold text-text-main">
               Tin đăng mới quanh bạn
             </h2>
-            <Badge variant="near">Toàn quốc</Badge>
+            <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
           </div>
-          <span className="text-xs text-text-muted">Cập nhật liên tục</span>
+          <Link href="/search" className="text-xs text-primary font-semibold hover:underline">
+            Xem tất cả tin &rarr;
+          </Link>
         </div>
 
-        {/* Danh sách tin đăng: Tự động đồng bộ tin đăng mới nhất của sinh viên */}
-        <HomeFeed />
+        <HomeFeed
+          initialItems={initialData.items}
+          initialCursor={initialData.nextCursor}
+        />
       </section>
     </div>
   );

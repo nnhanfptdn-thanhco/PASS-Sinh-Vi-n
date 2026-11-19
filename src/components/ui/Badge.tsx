@@ -11,6 +11,9 @@ export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
     | "sameSchool"  // "🎓 Cùng trường"
     | "near"        // "📍 Cùng phường/xã"
     | "graduating"  // "Sắp tốt nghiệp"
+    | "success"
+    | "reserved"
+    | "danger"
     | "default"
     | "outline";
 }
@@ -39,6 +42,12 @@ export function Badge({
       "bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
     graduating:
       "bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800",
+    success:
+      "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800",
+    reserved:
+      "bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800",
+    danger:
+      "bg-red-50 text-red-700 border border-red-200 dark:bg-red-950/60 dark:text-red-300 dark:border-red-800",
     default:
       "bg-surface-muted text-text-secondary border border-surface-border",
     outline:
@@ -53,6 +62,9 @@ export function Badge({
     sameSchool: <GraduationCap className="w-3 h-3" />,
     near: <MapPin className="w-3 h-3" />,
     graduating: <GraduationCap className="w-3 h-3" />,
+    success: null,
+    reserved: null,
+    danger: null,
     default: null,
     outline: null,
   };

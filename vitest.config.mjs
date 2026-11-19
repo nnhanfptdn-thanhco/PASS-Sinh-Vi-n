@@ -8,12 +8,14 @@ const __dirname = path.dirname(__filename);
 export default defineConfig({
   resolve: {
     alias: {
+      "@/data": path.resolve(__dirname, "./data"),
       "@": path.resolve(__dirname, "./src"),
       "server-only": path.resolve(__dirname, "./tests/mock-server-only.ts"),
     },
   },
   test: {
     environment: "node",
+    exclude: ["**/node_modules/**", "**/dist/**", "tests/rules/**"],
     env: {
       FIREBASE_PROJECT_ID: "cho-pass-sv-dev",
       NEXT_PUBLIC_FIREBASE_PROJECT_ID: "cho-pass-sv-dev",

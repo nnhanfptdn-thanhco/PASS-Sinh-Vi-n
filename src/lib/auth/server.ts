@@ -1,7 +1,7 @@
 import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import type { DecodedIdToken } from "firebase-admin/auth";
-import { adminAuth } from "@/lib/firebase/admin";
+import { adminAuth, adminDb } from "@/lib/firebase/admin";
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -40,12 +40,67 @@ export async function requireVerified(req: NextRequest): Promise<DecodedIdToken>
   return token;
 }
 
+export interface ApprovedStudentResult {
+  token: DecodedIdToken;
+  verification: Record<string, unknown>;
+  userDoc: Record<string, unknown>;
+}
+
+/**
+ * YÊU CẦU SINH VIÊN ĐÃ ĐƯỢC DUYỆT THẺ (WP-0.4)
+ * - Đọc trực tiếp Firestore verifications/{uid}.status === 'approved' (Single Source of Truth)
+ * - Không tin tưởng custom claim cũ vì token có thể sống 1 giờ sau khi admin thu hồi/từ chối
+ * - Trả về { token, verification, userDoc }
+ * - Khi status === 'expired' trả 403 đúng SPEC
+ */
+export async function requireApprovedStudent(req: NextRequest): Promise<ApprovedStudentResult> {
+  const token = await requireUser(req);
+
+  // Admin có thể bỏ qua kiểm tra hồ sơ thẻ sinh viên
+  if (token.admin === true || token.role === "admin") {
+    const userSnap = await adminDb.collection("users").doc(token.uid).get();
+    return {
+      token,
+      verification: { status: "approved", schoolCode: "ADMIN", role: "admin" },
+      userDoc: userSnap.exists ? (userSnap.data() as Record<string, unknown>) : { displayName: "Quản trị viên" },
+    };
+  }
+
+  const verifSnap = await adminDb.collection("verifications").doc(token.uid).get();
+
+  if (!verifSnap.exists) {
+    throw new HttpError(403, "Tài khoản chưa nộp hồ sơ xác minh sinh viên.");
+  }
+
+  const verifData = verifSnap.data() as Record<string, unknown>;
+  const status = verifData.status;
+
+  if (status === "expired") {
+    throw new HttpError(403, "Hồ sơ thẻ sinh viên của bạn đã hết hạn. Vui lòng nộp lại thẻ để gia hạn.");
+  }
+
+  if (status !== "approved") {
+    throw new HttpError(403, "Tài khoản đang chờ duyệt hoặc chưa được duyệt thẻ sinh viên.");
+  }
+
+  const userSnap = await adminDb.collection("users").doc(token.uid).get();
+  const userDoc = userSnap.exists
+    ? (userSnap.data() as Record<string, unknown>)
+    : { displayName: token.name || "Sinh viên" };
+
+  return {
+    token,
+    verification: verifData,
+    userDoc,
+  };
+}
+
 /**
  * Yêu cầu quyền quản trị viên (admin === true).
  */
 export async function requireAdmin(req: NextRequest): Promise<DecodedIdToken> {
   const token = await requireUser(req);
-  if (token.admin !== true) {
+  if (token.admin !== true && token.role !== "admin") {
     throw new HttpError(403, "Chỉ quản trị viên mới có quyền này.");
   }
   return token;

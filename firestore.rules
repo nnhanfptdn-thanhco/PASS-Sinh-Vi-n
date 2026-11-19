@@ -58,9 +58,10 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 5. listings: Đọc công khai tin đang bán, giữ chỗ hoặc đã bán; mọi tạo/sửa/xóa qua server API để kiểm duyệt
+    // 5. listings: Đọc công khai tin active hoặc reserved.
+    // LƯU Ý BẢO MẬT: BỎ 'sold' khỏi danh sách đọc công khai theo SPEC WP-2C (tin đã bán biến mất khỏi mọi nơi công khai, chỉ chủ tin và Admin đọc được).
     match /listings/{listingId} {
-      allow read: if resource.data.status in ['active', 'reserved', 'sold'] 
+      allow read: if resource.data.status in ['active', 'reserved'] 
                   || (isAuthenticated() && resource.data.sellerId == request.auth.uid)
                   || isAdmin();
       allow write: if false; // Toàn bộ tạo, sửa, đổi trạng thái qua API listings/create và listings/manage
@@ -92,13 +93,12 @@ service cloud.firestore {
         request.auth.uid in resource.data.participantIds ||
         isAdmin()
       );
-      allow create: if isAuthenticated() && (
-        request.auth.uid in request.resource.data.participantIds &&
-        request.resource.data.participantIds.size() == 2
-      );
+      // Client cấm tạo conversation trực tiếp, bắt buộc gọi qua API /api/conversations/create
+      allow create: if false;
       allow update: if isAuthenticated() && (
         request.auth.uid in resource.data.participantIds &&
-        request.resource.data.participantIds == resource.data.participantIds
+        request.resource.data.participantIds == resource.data.participantIds &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessage', 'updatedAt', 'readBy'])
       );
       allow delete: if isAdmin();
     }
@@ -108,23 +108,39 @@ service cloud.firestore {
         request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds ||
         isAdmin()
       );
-      allow create: if isAuthenticated() && (
+      allow create: if isAuthenticated() &&
         request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds &&
+        request.resource.data.keys().hasOnly(['senderId', 'text', 'createdAt', 'imagePath']) &&
         request.resource.data.senderId == request.auth.uid &&
-        request.resource.data.text.size() <= 1000
-      );
+        request.resource.data.text is string &&
+        request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 1000 &&
+        request.resource.data.createdAt == request.time &&
+        (!('imagePath' in request.resource.data) ||
+          request.resource.data.imagePath.matches('private/chats/' + convId + '/[A-Za-z0-9_-]{8,64}\\.(webp|jpg)'));
       allow update, delete: if false;
     }
 
-    // 9. favorites & follows
+    // 9. favorites & follows: Chống sửa userId, cấm update, giới hạn fields
     match /favorites/{favId} {
-      allow read, write: if isAuthenticated() && request.auth.uid == resource.data.userId;
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId;
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated()
+                    && request.auth.uid == request.resource.data.userId
+                    && request.resource.data.keys().hasOnly(['id', 'userId', 'listingId', 'createdAt'])
+                    && request.resource.data.id.size() <= 128
+                    && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
     }
 
     match /follows/{followId} {
-      allow read, write: if isAuthenticated() && request.auth.uid == resource.data.followerId;
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.followerId;
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.followerId;
+      allow create: if isAuthenticated()
+                    && request.auth.uid == request.resource.data.followerId
+                    && request.resource.data.keys().hasOnly(['id', 'followerId', 'followingId', 'createdAt'])
+                    && request.resource.data.id.size() <= 128
+                    && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.followerId;
     }
 
     // 10. reviews: Ghi qua Server API reviews để kiểm tra deal completed

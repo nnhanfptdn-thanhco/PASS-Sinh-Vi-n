@@ -54,17 +54,21 @@ export default function NotificationsPage() {
           const items: NotificationItem[] = snapshot.docs.map((docSnap) => {
             const data = docSnap.data();
             let href = "/my-listings";
-            if (data.type === "reservation_request" || data.type === "reservation_confirmed") {
+            if (
+              data.type?.includes("reservation") ||
+              data.type === "review_request" ||
+              data.type === "waitlist_promoted"
+            ) {
               href = "/reservations";
             } else if (data.type === "verification_result") {
-              href = "/listings/new";
+              href = "/auth/onboarding";
             }
 
             return {
               id: docSnap.id,
               type: data.type || "general",
               title: data.title || "Thông báo",
-              message: data.message || "",
+              message: data.body || data.message || "",
               read: Boolean(data.read),
               timeAgo: "Gần đây",
               href,
@@ -73,9 +77,46 @@ export default function NotificationsPage() {
           setNotifications(items);
           setIsLoading(false);
         },
-        () => {
-          setNotifications([]);
-          setIsLoading(false);
+        (err) => {
+          console.warn("Lỗi tải thông báo có orderBy, chuyển sang truy vấn dự phòng:", err);
+          const fallbackQ = query(
+            collection(db, "notifications"),
+            where("userId", "==", user.uid)
+          );
+          onSnapshot(
+            fallbackQ,
+            (fallbackSnap) => {
+              const fallbackItems: NotificationItem[] = fallbackSnap.docs.map((docSnap) => {
+                const data = docSnap.data();
+                let href = "/my-listings";
+                if (
+                  data.type?.includes("reservation") ||
+                  data.type === "review_request" ||
+                  data.type === "waitlist_promoted"
+                ) {
+                  href = "/reservations";
+                } else if (data.type === "verification_result") {
+                  href = "/auth/onboarding";
+                }
+
+                return {
+                  id: docSnap.id,
+                  type: data.type || "general",
+                  title: data.title || "Thông báo",
+                  message: data.body || data.message || "",
+                  read: Boolean(data.read),
+                  timeAgo: "Gần đây",
+                  href,
+                };
+              });
+              setNotifications(fallbackItems);
+              setIsLoading(false);
+            },
+            () => {
+              setNotifications([]);
+              setIsLoading(false);
+            }
+          );
         }
       );
 
