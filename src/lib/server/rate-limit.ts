@@ -1,4 +1,3 @@
-import "server-only";
 import { adminDb } from "@/lib/firebase/admin";
 import { ApiError } from "./http";
 

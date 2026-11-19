@@ -1,0 +1,559 @@
+PLAYBOOK HARDENING DỰ ÁN: CHỢ PASS SINH VIÊN
+Bộ quy tắc chuẩn & 9 Prompt thực thi tuần tự (Prompt 0 → Prompt 8) dành cho Antigravity
+PHẦN 1: HƯỚNG DẪN VẬN HÀNH & LỘ TRÌNH THỰC THI
+Bộ tài liệu được tách thành 9 prompt độc lập (Prompt 0 → 8), mỗi prompt chạy trên một phiên Antigravity riêng biệt, kèm 1 file quy tắc chung để không phải lặp lại luật ở từng lượt. Vì bản review ban đầu chưa đọc được thư mục src/, Prompt 0 bắt buộc phải chạy đầu tiên để xác minh từng phát hiện bằng code thật.
+1. Quy trình sử dụng
+Tạo file docs/HARDENING_RULES.md với nội dung ở Mục A (commit hoặc để untracked đều được). Mọi prompt đều bắt đầu bằng việc đọc file này.
+Chạy lần lượt Prompt 0 → 8, mỗi prompt mở một phiên làm việc mới trên Antigravity. Sau mỗi prompt, kiểm tra git diff và chạy thử ứng dụng rồi mới chuyển sang prompt kế tiếp.
+Không deploy bất kỳ dịch vụ nào cho tới khi hoàn tất Prompt 8. Danh sách các việc cần tự tay deploy nằm trong file docs/HARDENING_REPORT.md.
+2. Bảng tổng hợp lộ trình 9 Prompt
+MỤC A — NỘI DUNG FILE docs/HARDENING_RULES.md
+Copy toàn bộ nội dung trong khung dưới đây để tạo file docs/HARDENING_RULES.md trong thư mục dự án:
+PHẦN 2: CHI TIẾT 9 PROMPT THỰC THI (PROMPT 0 → PROMPT 8)
+PROMPT 0 — Audit & xác minh (chỉ đọc)
+Copy nguyên văn nội dung trong khung bên dưới để dán vào phiên Antigravity:
+PROMPT 1 — Rules & test emulator
+Copy nguyên văn nội dung trong khung bên dưới để dán vào phiên Antigravity:
+PROMPT 2 — API guard dùng chung + 3 route chính
+Copy nguyên văn nội dung trong khung bên dưới để dán vào phiên Antigravity:
+PROMPT 3 — Chat
+Copy nguyên văn nội dung trong khung bên dưới để dán vào phiên Antigravity:
+PROMPT 4 — Pipeline upload ảnh
+Copy nguyên văn nội dung trong khung bên dưới để dán vào phiên Antigravity:
+PROMPT 5 — Xác thực & xác minh sinh viên
+Copy nguyên văn nội dung trong khung bên dưới để dán vào phiên Antigravity:
+PROMPT 6 — UX flow
+Copy nguyên văn nội dung trong khung bên dưới để dán vào phiên Antigravity:
+PROMPT 7 — SEO, tìm kiếm, ảnh, headers, hiệu năng
+Copy nguyên văn nội dung trong khung bên dưới để dán vào phiên Antigravity:
+PROMPT 8 — Edge cases nghiệp vụ & nghiệm thu cuối
+Copy nguyên văn nội dung trong khung bên dưới để dán vào phiên Antigravity:
+Prompt | Nội dung chính | Phụ thuộc
+Prompt 0 | Audit, xác minh giả thuyết bằng code thật | Không
+Prompt 1 | Siết Storage/Firestore rules + hạ tầng test emulator | P0
+Prompt 2 | API guard dùng chung + 3 route chính & các route còn lại | P1 (path ảnh mới)
+Prompt 3 | Hardening tính năng Chat (H3) | P1, P2
+Prompt 4 | Làm lại pipeline upload ảnh tin đăng | P1, P2
+Prompt 5 | Xác thực, xác minh SV, cron xóa ảnh thẻ 30 ngày | P2
+Prompt 6 | Cải thiện UX luồng chính trên mobile (gate, vị trí, skeleton, copy) | P5
+Prompt 7 | SEO/OG, tìm kiếm không dấu, ảnh, security headers, hiệu năng | P2, P4
+Prompt 8 | Edge cases nghiệp vụ (giữ chỗ, múi giờ, xóa TK) & nghiệm thu cuối | Tất cả (P0–P7)
+Ba quyết định sản phẩm mặc định & Lưu ý vận hành
+• Bỏ crop cứng 4:3, giữ tỉ lệ gốc và hiển thị khung 4:3 bằng CSS.
+• Chỉ người đã verified mới mở được hội thoại chat.
+• Giữ nguyên chính sách email .edu.vn hiện có, nhưng ghi lại phương thức xác thực.
+• Lưu ý 1: Nếu Antigravity báo một phát hiện 'Không áp dụng', đó là tín hiệu tốt (code đã xử lý sẵn) — hãy kiểm tra bằng chứng file:dòng.
+• Lưu ý 2: Nếu Prompt 2 hoặc Prompt 7 quá dài cho 1 phiên, có thể cắt theo các mục ### và chạy làm 2 lượt (giữ nguyên câu mở đầu đọc HARDENING_RULES.md).
+• Lưu ý 3: Sau khi chạy xong Prompt 0, hãy lấy nội dung docs/AUDIT.md để đối chiếu với các giả thuyết trước khi chạy tiếp các prompt sau.
+# QUY TẮC LÀM VIỆC CHO MỌI PROMPT HARDENING
+
+## Dự án
+Chợ Pass Sinh Viên: Next.js 14 (App Router) + TypeScript + Tailwind; Firebase (Client SDK: Auth, Storage; Admin SDK: Firestore trong Route Handlers); Vitest; deploy Vercel. Chợ đồ cũ C2C cho sinh viên: chỉ SV đã được duyệt mới đăng tin và xem liên hệ người bán. Production chưa có dữ liệu thật.
+
+## Nguồn của các phát hiện
+Một bản review bên ngoài đã đọc README, firestore.rules, storage.rules, next.config.mjs và HTML trang live, nhưng KHÔNG đọc được src/. Vì vậy mọi phát hiện chỉ là GIẢ THUYẾT: luôn đọc code thật trước khi sửa. Nếu phát hiện sai hoặc đã được xử lý → ghi "Không áp dụng" kèm bằng chứng (file:dòng) rồi bỏ qua.
+
+## Luật bắt buộc
+1. Nhánh làm việc: `hardening/all` (Prompt 0 tạo). Mỗi prompt tạo các commit riêng, message dạng `hardening(pN): ...`. Không force-push, không rewrite lịch sử.
+2. KHÔNG chạy `firebase deploy`, `gcloud`, `vercel`; KHÔNG đọc/ghi/commit secret hoặc .env thật. Việc cần quyền cloud/Vercel → ghi vào "Việc chủ dự án tự làm".
+3. Không đổi stack, không nâng major version thư viện, không đổi tên route/collection nếu prompt không yêu cầu. Thêm dependency chỉ khi thật sự cần và ghi lý do.
+4. Gate sau mỗi prompt phải xanh: `npx tsc --noEmit`, `npm run lint`, `npm test`, `npm run build`; từ Prompt 1 thêm `npm run test:rules`. Test cũ không được hỏng; nếu hành vi đổi có chủ đích thì sửa test và ghi lý do. Gate đỏ thì sửa tới khi xanh; không tắt test/lint để qua; không commit trạng thái đỏ.
+5. Mỗi thay đổi bảo mật phải có test chứng minh: viết test trước, thấy fail, sửa, thấy pass.
+6. Quyết định chính sách chưa rõ: chọn phương án an toàn nhất mà KHÔNG phá hành vi hiện có, ghi vào "Quyết định cần chủ dự án xác nhận". Không hỏi giữa chừng.
+7. Không bịa số liệu (hiệu năng, độ phủ test...). Không đo được thì nói rõ là không đo được.
+8. Việc ngoài phạm vi prompt: không sửa, chỉ ghi vào "Phát hiện thêm".
+9. Không log PII (MSSV, ảnh thẻ, SĐT/Zalo, email); không đưa PII thật vào thông báo lỗi hay test fixture.
+10. Thông báo hướng người dùng viết bằng tiếng Việt có dấu, ngắn gọn, không đổ lỗi cho người dùng.
+
+## Báo cáo
+Cuối mỗi prompt, thêm một mục vào `docs/HARDENING_REPORT.md` (tạo nếu chưa có) gồm: Đã làm · Không áp dụng (+bằng chứng) · File đã đổi · Test đã thêm · Việc chủ dự án tự làm · Quyết định cần xác nhận · Phát hiện thêm · Kết quả các gate. Cuối phiên, trả lời người dùng tối đa 10 dòng tóm tắt.
+Đọc và tuân thủ tuyệt đối `docs/HARDENING_RULES.md`. Nếu file không tồn tại, dừng và báo người dùng.
+
+# PROMPT 0 — Audit & xác minh giả thuyết (CHỈ ĐỌC, KHÔNG SỬA CODE)
+
+## Mục tiêu
+Biến các giả thuyết của bản review bên ngoài thành sự thật có bằng chứng, để các prompt sau sửa đúng chỗ.
+
+## Phạm vi
+Chỉ được tạo/sửa: nhánh git và `docs/AUDIT.md`. Cấm sửa bất kỳ file nào khác.
+
+## Các bước
+1. Đảm bảo working tree sạch, tạo nhánh `hardening/all` từ `main`.
+2. Baseline: chạy `npx tsc --noEmit`, `npm run lint`, `npm test`, `npm run build`, `npm audit --omit=dev`. Ghi kết quả vào AUDIT.md (npm audit chỉ ghi số lượng theo mức độ).
+3. **Ma trận API routes.** Với mọi `src/app/api/**/route.ts`, lập bảng: đường dẫn · các HTTP method · cách xác thực (Bearer/cookie/không) · có yêu cầu verified không và lấy từ đâu · thư viện validate input (Zod?) · rate limit (kiểu in-memory hay lưu bền) · collection đọc/ghi · có dùng transaction không · header cache của response · có `runtime`/`dynamic` export không.
+4. **Ghi trực tiếp từ client.** `grep` các lệnh `addDoc|setDoc|updateDoc|deleteDoc|writeBatch|uploadBytes|uploadBytesResumable|deleteObject` trong `src/` ngoài thư mục `api`. Liệt kê file:dòng, collection/đường dẫn đích.
+5. **Trả lời từng câu hỏi, kèm file:dòng làm bằng chứng:**
+  - Q1. Trạng thái "verified" được quyết định ở đâu (custom claim, Firestore, cả hai)? Ai set claim? `AuthContext` đọc nguồn nào? localStorage được dùng để làm gì?
+  - Q2. Cơ chế "fallback ảnh WebP nén trực tiếp" đưa ảnh đi đâu (base64 trong Firestore, gửi qua API, nơi khác)? Timeout 1.2s cài đặt thế nào?
+  - Q3. Các đường dẫn Storage đang dùng trong code so với `storage.rules`. Có chỗ nào lệch không?
+  - Q4. Logic nhận diện email `.edu.vn`: chép nguyên đoạn code. Nó chỉ gợi ý trường hay cấp `verified`? Có kiểm tra `email_verified`? Dùng `endsWith` hay `includes`/regex?
+  - Q5. Cơ chế tự xóa ảnh thẻ SV sau 30 ngày thực tế là gì (README nói Cloud Functions, nhưng repo không có thư mục `functions/`)?
+  - Q6. Doc `users/{uid}` chứa những field nào? Có PII không?
+  - Q7. Rate limit cài đặt ra sao; có chạy đúng trên serverless không?
+  - Q8. Chat: ai tạo conversation và message (client hay API)? Các field của doc là gì?
+  - Q9. Giữ chỗ: có transaction không? Có hạn giữ chỗ/expiry không? Có giới hạn số lượt giữ chỗ mở không?
+  - Q10. `/api/listings/contact`: method, kiểm tra điều kiện, header cache, có log `contactViewLogs` không?
+  - Q11. `/api/verifications/submit`: validate gì? Dedupe HMAC thế nào? Thông báo lỗi trùng có lộ thông tin không?
+  - Q12. Tìm kiếm `/search` chạy ở đâu (client/API), có chuẩn hóa không dấu không, dùng index gì?
+  - Q13. Vị trí mặc định "ĐHQG TP.HCM · P. Linh Trung" ở header và danh sách "TP.HCM/Hà Nội/Đà Nẵng" đến từ đâu (hardcode, config, data)?
+  - Q14. Biến môi trường: dùng `NEXT_PUBLIC_*` nào; có fallback project id nào không; `.env.example` có khớp với code không?
+  - Q15. Test `security-rules` thực chất là gì (emulator + `@firebase/rules-unit-testing`, hay mock/kiểm tra chuỗi)?
+  - Q16. API xác thực bằng header Bearer hay cookie session? (Quyết định có cần CSRF hay không.)
+  - Q17. Quét bí mật: `git ls-files | grep -iE "\.env|serviceAccount|\.pem|\.key"` và `git grep -nE "private_key|BEGIN (RSA )?PRIVATE KEY|client_secret"`. Lưu ý apiKey web của Firebase (`AIza...`) là public theo thiết kế, chỉ cảnh báo khóa phía server. Kiểm tra `.gitignore` đã chặn `.env*` và file service account chưa.
+6. **Bảng 16 giả thuyết** (cột: ID · mô tả · Đúng/Không áp dụng/Một phần · bằng chứng · mức độ):
+   H1 ghi đè ảnh tin đăng của người khác (storage rule thiếu kiểm tra chủ tin) · H2 upload không giới hạn số file/quota · H3 chat mở cho mọi user đăng nhập, không whitelist field · H4 favorites/follows đổi được `userId` khi update · H5 `users` public chứa PII · H6 claim `verified` cũ + localStorage bị tin ở server · H7 email `.edu.vn` cấp verified yếu · H8 fallback lưu base64 · H9 timeout 1.2s quá ngắn · H10 xóa ảnh thẻ 30 ngày chưa thực hiện · H11 thiếu CSP/Permissions-Policy và có fallback project id `cho-pass-sv-dev` · H12 `/listings/new` không gate · H13 vị trí mặc định hardcode · H14 empty state nhấp nháy khi chưa tải xong · H15 thiếu thẻ Open Graph · H16 Safari/iOS trả PNG khi encode WebP từ canvas.
+7. Commit `hardening(p0): audit`.
+
+## Nghiệm thu
+- `docs/AUDIT.md` có đủ: baseline, ma trận API, danh sách ghi trực tiếp từ client, Q1–Q17, bảng H1–H16.
+- `git diff main --stat` chỉ có file trong `docs/`.
+
+## Trả lời cuối
+Nêu 5 vấn đề nghiêm trọng nhất đã được xác nhận bằng code, và các giả thuyết hóa ra sai.
+Đọc và tuân thủ tuyệt đối `docs/HARDENING_RULES.md`, rồi đọc `docs/AUDIT.md` (kết quả Prompt 0). Checkout nhánh `hardening/all`.
+
+# PROMPT 1 — Siết Storage/Firestore rules + hạ tầng test emulator
+
+## Mục tiêu
+Đóng các lỗ hổng ở tầng rules (H1, H2 phần rules, H4, H5) và có bộ test chạy trên emulator để chứng minh.
+
+## Phạm vi
+Được sửa: `storage.rules`, `firestore.rules`, `firebase.json` (phần emulators), `package.json` (script + devDependency), `vitest*.config.ts`, thư mục `tests/rules/`, và mã client tối thiểu để khớp đường dẫn Storage mới.
+KHÔNG làm ở prompt này: chat (Prompt 3), pipeline upload (Prompt 4), API (Prompt 2).
+
+## Các bước
+
+### 1. Hạ tầng test (làm trước)
+- Thêm `@firebase/rules-unit-testing` vào devDependencies. Chọn phiên bản tương thích với phiên bản `firebase` đang cài (đọc peerDependencies, ghi lý do vào report).
+- Trong `firebase.json` đảm bảo có emulator `firestore` và `storage` (giữ port hiện có).
+- Tạo `vitest.rules.config.ts`: `include: ['tests/rules/**/*.test.ts']`, chạy tuần tự (`fileParallelism: false`), `testTimeout: 20000`. Cấu hình `vitest` mặc định phải `exclude` `tests/rules/**` để `npm test` không cần emulator.
+- Thêm script: `"test:rules": "firebase emulators:exec --only firestore,storage --project demo-chopass \"vitest run -c vitest.rules.config.ts\""`. Dùng project id `demo-*` để không chạm project thật. Cần Java 11+, ghi vào README.
+- `tests/rules/helpers.ts`: khởi tạo test env đọc `firestore.rules` và `storage.rules` từ đĩa; hàm tạo context theo `uid` và custom claims (`verified`, `admin`); hàm seed dữ liệu bằng `withSecurityRulesDisabled`.
+- Nếu emulator Storage không chạy được cross-service `firestore.get`/`firestore.exists` ở một ca nào đó, ghi rõ ca đó trong report và đề xuất cách kiểm thay thế. Không bỏ qua im lặng.
+
+### 2. Viết test TRƯỚC (phải fail với rules hiện tại)
+Các ca phải bị TỪ CHỐI:
+- User B (verified) ghi đè hoặc xóa ảnh trong thư mục của User A.
+- User chưa verified upload ảnh tin đăng.
+- Upload ảnh tin đăng > 5MB; contentType không phải jpeg/png/webp; tên file không đúng mẫu.
+- Update một file ảnh tin đăng đã tồn tại (kể cả của chính mình).
+- User đọc `private/cards/{uidKhác}`; user đọc doc `verifications/{uidKhác}`.
+- Ghi vào `public/avatars/{uidKhác}`; avatar > 2MB.
+- Xóa ảnh thẻ khi hồ sơ đang `pending` hoặc `approved`.
+- Favorite/follow: update đổi `userId`; create với `userId` của người khác; thừa key lạ; `createdAt` khác `request.time`.
+Các ca phải được PHÉP: chủ tin upload ảnh hợp lệ vào thư mục của mình; chủ tin xóa ảnh của mình; admin xóa ảnh; đọc ảnh công khai khi chưa đăng nhập; user tự cập nhật avatar; user xóa favorite của mình; xóa ảnh thẻ khi chưa nộp hồ sơ hoặc hồ sơ `rejected`.
+
+### 3. Sửa `storage.rules`
+- Quy ước đường dẫn mới: `public/listings/{userId}/{draftId}/{fileName}` (`draftId` là UUID v4 do client sinh mỗi phiên đăng tin; Prompt 2 sẽ dùng nó làm id tin).
+- Cho phép `create` (không cho `update`), delete theo chủ hoặc admin. Mẫu tham khảo, điều chỉnh theo code thật:
+  ```
+  function isValidImage(maxBytes) {
+    return request.resource.contentType.matches('image/(jpeg|png|webp)')
+      && request.resource.size <= maxBytes;
+  }
+  match /public/listings/{userId}/{draftId}/{fileName} {
+    allow read: if true;
+    allow create: if isOwner(userId) && isVerified()
+      && isValidImage(5 * 1024 * 1024)
+      && fileName.matches('[A-Za-z0-9_-]{8,64}\.(webp|jpg)');
+    allow update: if false;
+    allow delete: if isOwner(userId) || isAdmin();
+  }
+  ```
+- Avatars: tên file cố định `avatar.webp` (cho phép update để đổi avatar), tối đa 2MB, chỉ chủ tài khoản. Ghi chú trong code client: thêm `?v=<updatedAt>` để tránh cache cũ.
+- Ảnh thẻ `private/cards/{userId}/{fileName}`: chỉ `create` (không update), tên file ngẫu nhiên theo mẫu, ≤10MB. `delete` cho phép admin, hoặc chủ khi KHÔNG tồn tại hồ sơ hoặc hồ sơ `rejected`. Lưu ý `firestore.get` lỗi nếu doc không tồn tại, nên bọc bằng `firestore.exists(...)` trước.
+- Không động tới `private/chats` (Prompt 3).
+- Ghi chú trong file: rules không giới hạn được số lượng file ⇒ quota phải kiểm ở API (Prompt 2) và dọn rác định kỳ (Prompt 8).
+
+### 4. Sửa `firestore.rules`
+- `favorites` và `follows`: tách `allow read, write` thành `read` (theo `userId`/`followerId`), `create` (ép `userId == auth.uid`, `keys().hasOnly([...])` theo field thực tế, độ dài id ≤128, `createdAt == request.time`), `update: false`, `delete` (theo chủ). Nếu code hiện dùng docId xác định (ví dụ `${uid}_${listingId}`) thì ép luôn docId.
+- `users`: dựa vào kết quả Q6. Nếu doc có PII (email, SĐT, MSSV, trạng thái duyệt, đường dẫn ảnh thẻ...), tách phần công khai ra (`displayName`, `photoURL`, `schoolCode`, `createdAt`, huy hiệu) và chuyển PII sang `usersPrivate`; cập nhật mọi chỗ đọc/ghi. Nếu không có PII, ghi "Không áp dụng" kèm bằng chứng.
+
+### 5. Cập nhật client tối thiểu
+Tìm mọi chỗ dùng `public/listings/` và đổi sang đường dẫn mới để build và test cũ vẫn xanh. Chưa cần làm UX upload mới (Prompt 4), chỉ đổi path và sinh `draftId`.
+
+### 6. Chạy toàn bộ gate (gồm `npm run test:rules`), commit.
+
+## Nghiệm thu
+- Tất cả ca TỪ CHỐI/ĐƯỢC PHÉP ở bước 2 có test, đã từng fail trước khi sửa và pass sau khi sửa.
+- `npm test` không cần emulator; `npm run test:rules` chạy được từ máy sạch (có Java).
+- Không còn code nào ghi vào `public/listings/{listingId}/...` theo path cũ.
+
+## Việc chủ dự án tự làm (ghi vào report)
+Deploy rules sau khi toàn bộ prompt xong: `firebase deploy --only firestore:rules,storage`.
+Đọc và tuân thủ tuyệt đối `docs/HARDENING_RULES.md`, rồi đọc `docs/AUDIT.md`. Checkout `hardening/all`.
+
+# PROMPT 2 — Hardening API Routes
+
+## Mục tiêu
+Mọi quyết định bảo mật nằm ở server, nhất quán, có test: xác thực, verified, validate input, rate limit bền, idempotency. Áp dụng cho `/api/listings/create`, `/api/listings/contact`, `/api/verifications/submit` và các route còn lại trong ma trận Prompt 0.
+
+## Phạm vi
+Được sửa: `src/app/api/**`, `src/lib/server/**` (tạo mới), `tests/**`, và code client gọi API nếu hợp đồng request/response đổi.
+KHÔNG làm: chat (Prompt 3), pipeline upload client (Prompt 4), logic duyệt thẻ và cron (Prompt 5).
+
+## Các bước
+
+### 1. Hạ tầng dùng chung `src/lib/server/`
+- `http.ts`: lớp `ApiError(status, code, message)`; `withApi(handler)` bắt lỗi (ApiError → đúng mã; ZodError → 400 với danh sách lỗi rút gọn; lỗi lạ → 500 chung chung, log phía server không kèm PII); `readJson(req, maxBytes = 64 * 1024)` kiểm tra content-type và kích thước (413 khi vượt).
+- `auth-guard.ts`: 
+  - `requireAuth(req)`: lấy Bearer token, `verifyIdToken(token, true)` (checkRevoked, cũng bắt user bị disable) → 401 nếu lỗi.
+  - `requireVerified(req)`: sau `requireAuth`, đọc trạng thái verified từ Firestore làm nguồn sự thật (dùng đúng nơi admin approve đang ghi, xem Q1; nếu có hai nơi lệch nhau thì ghi vào report và dùng `verifications/{uid}.status === 'approved'`). KHÔNG tin body, header, localStorage hay claim cũ.
+  - `requireAdmin(req)`: claim admin từ token đã verify.
+  - Nếu Q16 cho thấy dùng cookie session: thêm `assertSameOrigin(req)` cho mọi method khác GET. Nếu dùng Bearer thì ghi "CSRF không áp dụng".
+- `rate-limit.ts`: `consumeRateLimit({ scope, key, limit, windowSec })` bằng Firestore transaction trên `rateLimits/{scope}_{key}_{windowStart}` (fields `count`, `expiresAt`); vượt thì `ApiError(429)` kèm header `Retry-After`. Preset: xem liên hệ 10/giờ/uid (README), tạo tin 5/giờ/uid, nộp hồ sơ SV 3/ngày/uid. TUYỆT ĐỐI không dùng Map in-memory (vô tác dụng trên serverless).
+- `schemas.ts`: các schema Zod `.strict()` dùng chung.
+- Mọi route dùng firebase-admin phải có `export const runtime = 'nodejs'` và `export const dynamic = 'force-dynamic'`.
+- Các collection mới (`rateLimits`, `idempotency`) chỉ Admin SDK ghi; rules default-deny đã bao phủ, hãy viết thêm một test rules xác nhận client không đọc/ghi được.
+
+### 2. `/api/listings/create`
+- Body theo schema `.strict()`; chỉ copy field được phép. KHÔNG spread body vào doc. `sellerId`, `status`, `createdAt`, `viewCount`, `searchTokens` do server gán. Giữ nguyên cấu trúc dữ liệu hiện có.
+- Request mang `draftId` (UUID v4) và `images: string[]` là đường dẫn Storage. Server kiểm: từng path bắt đầu bằng `public/listings/${uid}/${draftId}/`, số lượng 3–10, không trùng, object tồn tại (`exists()` + metadata contentType là image). Id tin = `draftId`; nếu doc đã tồn tại thì trả 409.
+- Giới hạn: title 5–80 ký tự, mô tả tối đa 2000, giá số nguyên 0–500.000.000 VND, category/trường/vùng nằm trong danh mục thật, `deadline` dạng `YYYY-MM-DD` trong khoảng hôm nay đến +90 ngày (tính theo giờ VN, xem Prompt 8 cho chi tiết múi giờ), enum cho tình trạng và hình thức giao nhận.
+- Giới hạn "tối đa 10 tin đang bán" kiểm trong transaction (query `sellerId == uid` và `status in [active, reserved]`, `limit(10)`). Rate limit 5 tin/giờ khống chế phần race còn lại, ghi chú điều này trong code.
+- Idempotency: header `Idempotency-Key` (UUID). Ghi doc `idempotency/{uid}_{key}` (kèm `expiresAt` +24h) CÙNG transaction với việc tạo tin. Gọi lại cùng key thì trả lại kết quả cũ, không tạo tin thứ hai.
+- Cấu hình `BLOCK_CONTACT_IN_PUBLIC_TEXT = true` trong `src/config/`: nếu title/mô tả chứa SĐT Việt Nam hoặc link `zalo.me` thì trả 422 với thông báo "Vui lòng không ghi số điện thoại/Zalo trong mô tả. Người mua đã xác minh sẽ xem được liên hệ của bạn." Ghi vào "Quyết định cần xác nhận".
+
+### 3. `/api/listings/contact`
+- Chỉ POST `{ listingId }`; GET trả 405.
+- Thứ tự: `requireVerified` → nếu đã có log `contactViewLogs/{uid}_{listingId}` thì trả lại liên hệ mà KHÔNG trừ quota (xem lại không bị phạt) → ngược lại `consumeRateLimit` → transaction kiểm tin.
+- Điều kiện: tin `active`; hoặc `reserved` và người gọi là người đang giữ chỗ hợp lệ; người gọi khác người bán; người bán không bị khóa. Không thỏa ⇒ 404 (không phân biệt "không tồn tại" và "không được xem").
+- Ghi `contactViewLogs/{uid}_{listingId}` (viewerId, sellerId, listingId, firstViewedAt, viewCount) trong cùng transaction.
+- Response luôn có `Cache-Control: no-store`.
+
+### 4. `/api/verifications/submit`
+- Path ảnh phải bắt đầu bằng `private/cards/${uid}/`; kiểm tra object tồn tại, contentType image, kích thước ≤10MB bằng metadata ở server.
+- Chặn nộp lại khi đang `pending`; chặn ghi đè khi đã `approved`; cho nộp lại khi `rejected`.
+- Dedupe HMAC-SHA256 (secret từ env, không hardcode): dùng doc `studentIdHashes/{hash}` làm khóa duy nhất trong transaction. Khi trùng trả 409 với thông báo chung "Thông tin này không thể dùng để xác minh. Vui lòng liên hệ hỗ trợ." KHÔNG tiết lộ tài khoản nào đang giữ MSSV.
+- Rate limit 3/ngày. Không log MSSV hay đường dẫn ảnh.
+
+### 5. Các route còn lại
+Với từng route trong ma trận Prompt 0 (`listings/manage`, `reservations/*`, `reviews`, `reports`, `appeals`, `account/delete`, `admin/*`...): thay logic auth tự viết bằng helper, thêm Zod `.strict()` nếu thiếu, đảm bảo `uid`/`sellerId` lấy từ token. KHÔNG đổi hành vi nghiệp vụ.
+
+### 6. Test (Vitest, theo mẫu mock firebase-admin đang có trong `api-auth-guards`)
+Tối thiểu: không token → 401; token revoke/disabled → 401; chưa verified → 403; body có `sellerId` giả bị bỏ qua hoặc bị 400 do `.strict()`; body > 64KB → 413; vượt rate limit → 429 có `Retry-After`; create với path ảnh của người khác → 400; create trùng `draftId` → 409; create hai lần cùng Idempotency-Key → 1 tin; create khi đã đủ 10 tin → 409; create có SĐT trong mô tả → 422; contact tin không active → 404 và có `no-store`; contact GET → 405; xem lại liên hệ không trừ quota; submit hồ sơ trùng hash → 409 với thông báo chung; submit path ảnh của người khác → 400.
+
+### 7. Chạy toàn bộ gate, commit.
+
+## Nghiệm thu
+Không route nào còn tự parse token riêng; không còn rate limit in-memory; mọi test ở bước 6 pass.
+
+## Việc chủ dự án tự làm (ghi vào report)
+Bật Firestore TTL cho `expiresAt` của hai collection `rateLimits` và `idempotency` (lệnh dạng `gcloud firestore fields ttls update expiresAt --collection-group=rateLimits --enable-ttl`, kiểm tra cú pháp theo tài liệu hiện hành); đặt `STUDENT_ID_HMAC_SECRET` trên Vercel.
+Đọc và tuân thủ tuyệt đối `docs/HARDENING_RULES.md`, rồi đọc `docs/AUDIT.md` (Q8). Checkout `hardening/all`. Prompt 1 và 2 đã xong.
+
+# PROMPT 3 — Hardening chat (H3)
+
+## Mục tiêu
+Chỉ người đã verified mới mở được hội thoại; tin nhắn hợp lệ nghiêm ngặt; không còn khoảng trống để vòng qua cơ chế ẩn liên hệ bằng spam; ảnh chat an toàn.
+
+## Phạm vi
+Được sửa: collection `conversations`/`messages` trong `firestore.rules`, `private/chats` trong `storage.rules`, route mới `/api/conversations/create`, màn hình `/messages` và component chat, test.
+KHÔNG làm: thêm tính năng mới (report, chặn người dùng, v.v.) ngoài những gì liệt kê dưới đây.
+
+## Các bước
+
+### 1. Đọc chat hiện tại
+Ghi vào report: cấu trúc doc conversation/message hiện có, nơi client ghi trực tiếp, cách sinh id hội thoại.
+
+### 2. Viết test rules TRƯỚC (phải fail với rules hiện tại)
+Phải bị TỪ CHỐI: client tạo conversation trực tiếp; message có `createdAt` ≠ `request.time`; text rỗng hoặc >1000; key lạ trong message; `senderId` khác `auth.uid`; user không thuộc hội thoại đọc/ghi message; update/xóa message; update conversation làm đổi `participantIds` hoặc field ngoài whitelist; `imagePath` không thuộc `private/chats/{convId}/`; upload ảnh chat không phải participant, >3MB, tên file sai mẫu, update file đã có.
+Phải được PHÉP: participant gửi message hợp lệ; participant đọc; participant cập nhật `lastMessage`/`updatedAt`/`readBy`; participant upload ảnh chat hợp lệ.
+
+### 3. API `/api/conversations/create` (POST `{ otherUserId, listingId? }`)
+- `requireVerified`; từ chối nếu `otherUserId === uid`, người kia không tồn tại hoặc bị khóa.
+- Nếu có `listingId`: tin phải `active` và `sellerId === otherUserId`.
+- Id hội thoại xác định: `sorted([uidA, uidB]).join('_') + (listingId ? '_' + listingId : '')`. Tạo trong transaction nếu chưa có, ngược lại trả hội thoại cũ (không tạo trùng).
+- Doc chỉ gồm field whitelist: `participantIds` (2 phần tử khác nhau), `listingId?`, `createdAt`, `updatedAt`, `lastMessage`, `readBy`.
+- Rate limit: 20 hội thoại mới/ngày/uid.
+
+### 4. Sửa rules
+- `conversations`: `create: false`; `read` theo participant/admin; `update` chỉ cho `participantIds` bất biến và `affectedKeys().hasOnly(['lastMessage','updatedAt','readBy'])`; `delete` chỉ admin.
+- `messages`: `create` bắt buộc:
+  ```
+  isAuthenticated()
+  && request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds
+  && request.resource.data.keys().hasOnly(['senderId','text','createdAt','imagePath'])
+  && request.resource.data.senderId == request.auth.uid
+  && request.resource.data.text is string
+  && request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 1000
+  && request.resource.data.createdAt == request.time
+  && (!('imagePath' in request.resource.data)
+      || request.resource.data.imagePath.matches('private/chats/' + convId + '/[A-Za-z0-9_-]{8,64}\.(webp|jpg)'))
+  ```
+  (Điều chỉnh nếu tin chỉ có ảnh không có text; không nới lỏng các điều kiện còn lại.)
+- `storage.rules` `private/chats/{chatId}/{fileName}`: `read` và `create` cho participant (qua `firestore.get` kèm `exists`), `create` chỉ khi `isValidImage(3MB)` và tên file đúng mẫu, `update: false`, `delete` chỉ admin.
+
+### 5. Client
+- Mở hội thoại bằng cách gọi API ở bước 3 (có `Authorization` Bearer), không ghi `conversations` trực tiếp.
+- Gửi tin dùng `serverTimestamp()`; ảnh lưu `imagePath`, lấy URL bằng `getDownloadURL` khi hiển thị.
+- Hiển thị text bằng React (không `dangerouslySetInnerHTML`); không tự biến văn bản thành link.
+- Banner cố định đầu khung chat: "Không chuyển khoản đặt cọc trước. Hẹn gặp ở nơi công cộng như cổng trường, KTX."
+- `onSnapshot`: `limit(50)`, `orderBy('createdAt','desc')`, nút "Tải thêm", và PHẢI unsubscribe khi unmount.
+- Người dùng chưa verified bấm "Nhắn tin" thấy hộp thoại dẫn tới onboarding, không bị lỗi trần.
+
+### 6. Chạy toàn bộ gate, commit.
+
+## Nghiệm thu
+Mọi ca ở bước 2 có test (fail trước, pass sau). Client không còn `setDoc/addDoc` vào `conversations`. Không còn listener Firestore rò rỉ khi rời màn chat.
+Đọc và tuân thủ tuyệt đối `docs/HARDENING_RULES.md`, rồi đọc `docs/AUDIT.md` (Q2, Q3, H8, H9, H16). Checkout `hardening/all`. Prompt 1 và 2 đã xong: đường dẫn ảnh mới là `public/listings/{uid}/{draftId}/{fileName}`; `/api/listings/create` nhận `draftId`, `images[]` (storage paths) và `Idempotency-Key`.
+
+# PROMPT 4 — Làm lại pipeline upload ảnh tin đăng
+
+## Mục tiêu
+Nút đăng tin không treo, ảnh không bao giờ bị nhét inline vào Firestore, chạy ổn trên mạng 4G chậm, iPhone/Safari và máy Android yếu.
+
+## Phạm vi
+Được sửa: bước 1 của `/listings/new`, các hàm nén/upload ảnh, hook/state liên quan, test. KHÔNG làm: các bước 2–5 của form (Prompt 6), thay đổi rules (đã xong).
+
+## Các bước
+
+### 1. Loại bỏ fallback inline
+Tìm mọi chỗ dùng data URL/base64 cho ảnh tin đăng (kể cả khi hiển thị). Xóa hẳn đường fallback "ảnh WebP nén trực tiếp" cùng test ràng buộc nó. Lý do để ghi vào code comment và report: doc Firestore giới hạn 1MiB, mọi lần đọc feed sẽ tải cả ảnh, và body request của function trên Vercel bị giới hạn ở 4,5MB nên không thể đẩy ảnh qua API.
+
+### 2. Module nén ảnh `src/lib/image/compress.ts`
+Tách thành hàm thuần dễ test + phần dùng canvas:
+- Validate đầu vào: type thuộc `image/jpeg|png|webp` (HEIC/khác thì báo "Định dạng ảnh chưa được hỗ trợ, hãy chọn JPG/PNG"), kích thước file ≤ 25MB (tránh tràn bộ nhớ).
+- Giải mã: ưu tiên `createImageBitmap(file, { imageOrientation: 'from-image' })`; nếu trình duyệt không hỗ trợ tùy chọn thì fallback `<img>` + `decode()`. Luôn `bitmap.close()` và `URL.revokeObjectURL` sau khi dùng.
+- Giữ tỉ lệ gốc; cạnh dài tối đa 1600px (hàm thuần `computeTargetSize(w, h, maxEdge)` có test). Vẽ thẳng lên canvas kích thước đích (không vẽ ảnh gốc khổng lồ rồi mới thu nhỏ).
+- Mã hóa: thử `image/webp` quality 0.8, rồi **kiểm tra `blob.type`**. Nếu không phải `image/webp` (Safari/iOS có thể trả PNG) thì encode lại `image/jpeg` quality 0.82. Hàm thuần `pickOutputFormat(blobType)` có test.
+- Nếu blob > 1,5MB thì giảm quality theo bậc (0.7 → 0.6 → 0.5); nếu vẫn >5MB thì báo lỗi rõ ràng.
+- Quyết định sản phẩm (ghi vào report): KHÔNG crop cứng 4:3. Thẻ tin dùng CSS `aspect-ratio: 4/3` + `object-cover`, trang chi tiết dùng `object-contain`. Ảnh bìa vẫn chọn bằng ngôi sao.
+- Nén tuần tự từng ảnh (1 lúc 1 ảnh) để tránh tràn RAM.
+
+### 3. Hàng đợi upload (state machine)
+Mỗi ảnh có trạng thái: `queued → compressing → uploading(progress%) → done | error(reason)`.
+- `draftId = crypto.randomUUID()` khi mở form (giữ nguyên trong phiên); tên file `${crypto.randomUUID()}.webp|jpg` (khớp mẫu rules).
+- Upload bằng `uploadBytesResumable`, tối đa 2 ảnh song song (hàm `runPool` có test).
+- KHÔNG có timeout tổng 1,2s. Thay bằng: phát hiện đứng hình khi 20 giây không có tiến trình thì hủy và đánh dấu `error`; tự thử lại tối đa 3 lần với backoff (1s, 3s, 7s) cho lỗi mạng; sau đó hiện nút "Thử lại" ở đúng ảnh lỗi.
+- Phân loại lỗi hiển thị: `storage/unauthorized` ⇒ gọi `getIdToken(true)` đúng một lần rồi thử lại (claim `verified` có thể cũ), nếu vẫn lỗi thì thông báo cần xác minh thẻ SV; `storage/bucket-not-found`/lỗi cấu hình ⇒ "Hệ thống lưu ảnh đang bảo trì, vui lòng thử lại sau" (và log phía client không kèm PII); `storage/canceled` ⇒ bỏ qua; mất mạng ⇒ "Mất kết nối, ảnh sẽ tự thử lại".
+- Nút "Tiếp tục" của bước 1 chỉ bật khi ≥3 ảnh `done` và không còn ảnh `compressing/uploading`. Hiển thị tiến trình tổng và từng ảnh.
+- Xóa ảnh trong form: nếu đã `done` thì gọi `deleteObject` (rules cho phép chủ xóa). Hủy cả form: xóa các ảnh đã upload (best effort, lỗi thì bỏ qua; Prompt 8 có cron dọn rác).
+- Lưu danh sách `{draftId, paths}` vào localStorage (khóa theo uid, TTL 24h) để tải lại trang không mất ảnh đã upload; hiển thị lại bằng `getDownloadURL`.
+
+### 4. Nối với API
+Khi đăng tin gửi `draftId`, `images` (paths theo thứ tự, ảnh bìa đứng đầu hoặc có `coverIndex`, theo hợp đồng Prompt 2), `Idempotency-Key` sinh một lần khi mở form. Nút "Đăng tin" vô hiệu khi đang gửi, có thông báo lỗi tiếng Việt cho 401/403/409/422/429; 429 đọc `Retry-After`.
+
+### 5. Input chọn ảnh
+`accept="image/jpeg,image/png,image/webp"`, `multiple`; cho phép chụp trực tiếp trên điện thoại. Giới hạn tổng 10 ảnh; chọn quá sẽ báo và chỉ nhận phần còn trống.
+
+### 6. Test (Vitest)
+Hàm thuần: `computeTargetSize`, `pickOutputFormat`, `runPool` (giới hạn song song, thứ tự), reducer trạng thái hàng đợi (chuyển trạng thái, retry, stall), phân loại lỗi Storage, `canSubmit`. Không thêm thư viện test DOM nếu chưa có; phần canvas được mock ở mức tối thiểu hoặc ghi chú "kiểm tra tay trên thiết bị thật".
+
+### 7. Chạy toàn bộ gate, commit.
+
+## Nghiệm thu
+Không còn data URL cho ảnh tin; không có timeout cứng 1,2s; nút đăng tin không treo vô hạn trong mọi kịch bản lỗi; thêm file `docs/MANUAL_QA.md` mục "Upload ảnh" liệt kê các ca cần chủ dự án thử tay: iPhone Safari, Android Chrome, giả lập 4G chậm, tắt mạng giữa chừng, chọn ảnh HEIC, chọn ảnh >25MB.
+
+## Việc chủ dự án tự làm (ghi vào report)
+Xác nhận production đã tạo Storage bucket (cần gói Blaze) và đã deploy `storage.rules` mới.
+Đọc và tuân thủ tuyệt đối `docs/HARDENING_RULES.md`, rồi đọc `docs/AUDIT.md` (Q1, Q4, Q5, Q11, H6, H7, H10). Checkout `hardening/all`. Prompt 1 và 2 đã xong.
+
+# PROMPT 5 — Xác thực, xác minh SV, vòng đời ảnh thẻ
+
+## Mục tiêu
+Trạng thái verified nhất quán và chỉ tin ở server; email `.edu.vn` không bị bypass; admin duyệt thẻ có dấu vết; ảnh thẻ thật sự bị xóa sau 30 ngày.
+
+## Phạm vi
+Được sửa: `AuthContext`, onboarding/verify UI, logic email trường, route admin duyệt thẻ, cron mới, `vercel.json`, tài liệu, test. KHÔNG đổi chính sách ai được xem liên hệ (ghi vào "Quyết định cần xác nhận").
+
+## Các bước
+
+### 1. Hàm `isStudentEmail` thuần có test
+`src/lib/auth/student-email.ts`: nhận `{ email, emailVerified, allowedSuffixes }`. Quy tắc: chuẩn hóa chữ thường và trim; chỉ chấp nhận khi `emailVerified === true`; lấy domain sau dấu `@` cuối cùng; chấp nhận khi domain bằng hoặc kết thúc bằng `.edu.vn` (hoặc theo allowlist suffix nếu code đang dùng danh sách trường). Test phải gồm các ca KHÔNG được chấp nhận: `a@edu.vn.evil.com`, `a@evil-edu.vn`, `a@evil.com`, `a@sub.edu.vn.attacker.org`, có khoảng trắng, nhiều `@`, domain có dấu chấm cuối, unicode giống chữ (homoglyph), `emailVerified=false`. Ca ĐƯỢC chấp nhận: `a@hust.edu.vn`, `a@student.hcmus.edu.vn`, chữ hoa. Thay mọi chỗ kiểm tra email hiện có bằng hàm này (cả client lẫn server).
+
+### 2. Ghi rõ phương thức xác minh
+Dựa vào Q4: giữ NGUYÊN chính sách hiện tại (email có cấp `verified` tự động hay không), nhưng ghi thêm `verificationMethod: 'edu_email' | 'student_card'` khi cấp quyền, và đưa chính sách vào một hằng trong `src/config/verification.ts` (`AUTO_VERIFY_BY_EDU_EMAIL`, `CONTACT_REQUIRES_CARD`) đặt đúng giá trị hiện tại. UI hiển thị huy hiệu đúng nghĩa: "Đã xác thực email trường" khác "Đã duyệt thẻ sinh viên". Ghi vào "Quyết định cần xác nhận": nếu email tự cấp verified thì giảng viên/cựu SV cũng có email `.edu.vn`, khuyến nghị `CONTACT_REQUIRES_CARD = true`.
+
+### 3. Đồng bộ claim tức thì, đúng cách
+- Route admin duyệt: cập nhật Firestore và `setCustomUserClaims` thành công cả hai; nếu bước sau lỗi thì rollback hoặc đánh dấu để retry, không để lệch trạng thái. Không gọi `revokeRefreshTokens` (làm người dùng bị đăng xuất).
+- `AuthContext`: lắng nghe `onSnapshot` `verifications/{uid}` (rules cho chủ đọc). Khi trạng thái chuyển sang `approved` thì `await user.getIdToken(true)` rồi cập nhật context.
+- localStorage chỉ được dùng để hiển thị nhanh UI: khóa theo uid, có TTL, xóa khi đăng xuất hoặc khi uid khác. Cấm dùng giá trị này để quyết định bất kỳ điều gì bảo mật; thêm comment cảnh báo tại đó. Server dùng `requireVerified` (Prompt 2).
+
+### 4. Admin xem ảnh thẻ có dấu vết
+Nếu admin hiện đọc ảnh trực tiếp từ Storage: thay bằng route `/api/admin/verifications/[uid]/card-url` (`requireAdmin`) trả signed URL hết hạn sau 5 phút và ghi `adminLogs` (adminUid, targetUid, action `view_card`, thời điểm). Trang admin hiển thị tên trên hồ sơ cạnh tên tài khoản Google để đối chiếu, danh sách sắp xếp hồ sơ cũ nhất lên đầu và đánh dấu hồ sơ chờ >24 giờ. Mọi quyết định duyệt/từ chối cũng ghi `adminLogs` kèm lý do.
+
+### 5. Xóa ảnh thẻ sau 30 ngày
+- Tạo helper `verifyCronRequest(req)` kiểm `Authorization: Bearer ${CRON_SECRET}` (Vercel gửi header này khi đã đặt biến `CRON_SECRET`). Thiếu hoặc sai ⇒ 401.
+- Route `/api/cron/purge-cards`: liệt kê object dưới `private/cards/` có tuổi >30 ngày (theo metadata `timeCreated`), xóa, đánh dấu `cardImagePurgedAt` trên hồ sơ tương ứng. Có giới hạn mỗi lần chạy (tối đa 500 file) và log số lượng (không log đường dẫn/tên người dùng). Kèm xóa ảnh thẻ mồ côi (không thuộc hồ sơ nào) cũ hơn 24 giờ.
+- `vercel.json`: thêm `crons` chạy hằng ngày cho route trên (lịch hằng ngày phù hợp mọi gói; ghi chú kiểm tra giới hạn gói của chủ dự án).
+- Thêm file `storage-lifecycle.json` làm lớp bảo vệ thứ hai: xóa object có tuổi ≥30 ngày với `matchesPrefix: ["private/cards/"]`.
+- Test: `verifyCronRequest` (thiếu/sai/đúng secret), logic chọn file quá hạn (hàm thuần).
+
+### 6. Sửa README
+Bỏ/sửa các mô tả không đúng thực tế (Cloud Functions nếu không có; câu "100% đã xác minh"). Thêm mục "Vòng đời ảnh thẻ" mô tả cron + lifecycle.
+
+### 7. Chạy toàn bộ gate, commit.
+
+## Nghiệm thu
+`isStudentEmail` đủ test, không còn chỗ nào kiểm email theo cách khác; không còn quyết định bảo mật dựa vào localStorage; mọi lần admin xem ảnh thẻ có log; cron có bảo vệ secret.
+
+## Việc chủ dự án tự làm (ghi vào report)
+Đặt `CRON_SECRET` trên Vercel; áp lifecycle: `gcloud storage buckets update gs://<BUCKET> --lifecycle-file=storage-lifecycle.json`; bật 2FA cho tài khoản Google của admin; đặt `ADMIN_EMAIL`.
+Đọc và tuân thủ tuyệt đối `docs/HARDENING_RULES.md`, rồi đọc `docs/AUDIT.md` (Q13, H12, H13, H14). Checkout `hardening/all`. Prompt 4 và 5 đã xong.
+
+# PROMPT 6 — Cải thiện UX luồng chính trên mobile
+
+## Mục tiêu
+Người dùng không bị mất công vô ích, không thấy nội dung sai/nhấp nháy, thông điệp trung thực, thao tác thuận tay trên điện thoại.
+
+## Phạm vi
+Được sửa: component gate, header, `HomeFeed`, form `/listings/new` (các bước 2–5), bottom nav, copy. KHÔNG làm: SEO/ảnh/headers (Prompt 7), logic nghiệp vụ giữ chỗ (Prompt 8).
+
+## Các bước
+
+### 1. Gate cho `/listings/new`
+- Component `RequireVerified` (client): trạng thái `loading` ⇒ hiện skeleton của form (KHÔNG hiện wizard thật); chưa đăng nhập ⇒ chuyển tới `/auth/login?next=<đường dẫn hiện tại>`; đã đăng nhập nhưng chưa verified ⇒ thẻ hướng dẫn rõ ràng kèm nút tới `/auth/onboarding` (hiển thị trạng thái hồ sơ: chưa nộp, đang chờ duyệt, bị từ chối kèm lý do).
+- Hàm thuần `safeRedirectPath(next)` chống open redirect: chỉ nhận chuỗi bắt đầu bằng một `/` và không bắt đầu bằng `//` hay `/\`, không chứa `:` trước `/` đầu tiên, không phải chính `/auth/login` (tránh vòng lặp); không hợp lệ thì về `/`. Test cho: `//evil.com`, `/\evil.com`, `https://evil.com`, `javascript:alert(1)`, `/listings/new`, rỗng, `null`. Áp dụng ở mọi nơi đọc tham số `next`.
+- Áp cùng cơ chế cho `/messages`, `/profile`, `/my-listings`: khách chưa đăng nhập được chuyển tới login (có `next`), không flash nội dung.
+
+### 2. Nháp tin đăng
+Hook `useListingDraft`: lưu các field văn bản (không lưu blob) vào localStorage, khóa `draft:listing:{uid}`, có `version` và TTL 7 ngày, ghi có debounce; khôi phục khi mở lại; xóa khi đăng thành công. Cảnh báo `beforeunload` khi form có thay đổi chưa lưu/đăng.
+
+### 3. Form các bước 2–5
+- Thông báo lỗi tiếng Việt cạnh từng ô, `aria-live="polite"`, tự cuộn tới ô lỗi đầu tiên và focus.
+- Ô giá: `inputMode="numeric"`, hiển thị phân cách hàng nghìn kiểu `vi-VN`, giá trị lưu là số nguyên VND, định dạng khi blur.
+- Danh mục "Xe cộ": hiện khung cảnh báo ở bước thông tin và trang chi tiết: "Không đặt cọc trước. Kiểm tra giấy tờ xe chính chủ. Hẹn xem xe ở nơi công cộng."
+- Bước xem lại hiển thị đúng thông tin sẽ đăng. Nút "Đăng tin" chỉ bấm một lần (khóa khi đang gửi); thành công thì chuyển tới `/listings/[id]` hoặc `/my-listings`.
+
+### 4. Header & vị trí
+- Bỏ giá trị mặc định cứng "ĐHQG TP.HCM · P. Linh Trung" (dựa vào Q13 để tìm nguồn). Khách chưa chọn ⇒ hiện "Toàn quốc" và nút "Chọn trường/khu vực". Người đã đăng nhập ⇒ lấy từ hồ sơ. Lựa chọn của chính người dùng được nhớ ở localStorage.
+- Danh sách nhanh "TP.HCM / Hà Nội / Đà Nẵng": chuyển sang `src/config/featured-regions.ts` tham chiếu id vùng thật trong dữ liệu vùng (không hardcode tên rải rác).
+
+### 5. HomeFeed đủ 4 trạng thái
+`loading` ⇒ skeleton cùng kích thước thẻ thật (tránh nhảy layout); `error` ⇒ thông báo + nút "Thử lại"; `empty` ⇒ empty state "Đăng món đồ đầu tiên của trường bạn" CHỈ khi đã tải xong và thật sự rỗng; `data` ⇒ lưới thẻ. Trang `/search` làm tương tự.
+
+### 6. Mobile
+- Bottom nav: vùng chạm tối thiểu 44×44px, thêm `padding-bottom: env(safe-area-inset-bottom)` và `viewport-fit=cover` trong metadata viewport (giữ nguyên cho phép zoom, KHÔNG đặt `maximum-scale=1`). Tab đang chọn có `aria-current="page"`.
+- Mọi nút/biểu tượng chỉ có hình đều có `aria-label` tiếng Việt.
+
+### 7. Thông điệp trung thực
+Gom copy vào `src/config/copy.ts`. Thay "Uy tín 100%", "100% Thẻ SV xác thực", và các câu tương đương trên trang chủ/metadata/README bằng câu đúng với chính sách ở Prompt 5, ví dụ: "Người đăng tin là sinh viên đã được duyệt thẻ" (chỉ dùng câu này nếu `CONTACT_REQUIRES_CARD = true` hoặc xác minh thẻ là bắt buộc để đăng tin; nếu không, dùng "Người đăng tin là sinh viên đã xác thực").
+
+### 8. Test
+Hàm thuần: `safeRedirectPath`, định dạng/parse giá VND, logic hết hạn nháp. Không thêm thư viện test DOM nếu chưa có; phần giao diện thêm vào `docs/MANUAL_QA.md` mục "UX".
+
+### 9. Chạy toàn bộ gate, commit.
+
+## Nghiệm thu
+Khách mở `/listings/new` không thấy wizard; không còn chuỗi "TP.HCM · Linh Trung" mặc định; không còn câu "100%"; `safeRedirectPath` có đủ test.
+Đọc và tuân thủ tuyệt đối `docs/HARDENING_RULES.md`, rồi đọc `docs/AUDIT.md` (Q12, Q14, H11, H15). Checkout `hardening/all`. Prompt 2, 4 và 6 đã xong.
+
+# PROMPT 7 — SEO/chia sẻ, tìm kiếm không dấu, ảnh, security headers, hiệu năng
+
+## Mục tiêu
+Link chia sẻ qua Zalo/Facebook đẹp; tìm "quat" ra "quạt"; tải trang nhẹ trên mobile; headers an toàn mà không làm hỏng đăng nhập Google.
+
+## Phạm vi
+Được sửa: `src/app/layout.tsx` và `generateMetadata`, `sitemap.ts`, `robots.ts`, `next.config.mjs`, `src/lib/env.ts`, logic tìm kiếm/phân trang, `firestore.indexes.json`, component ảnh, test. KHÔNG làm: đổi UI ngoài phạm vi.
+
+## Các bước
+
+### 1. Metadata & Open Graph
+- `metadataBase` lấy từ `NEXT_PUBLIC_SITE_URL`, nếu thiếu thì từ biến hệ thống của Vercel (`VERCEL_PROJECT_PRODUCTION_URL`), cuối cùng là localhost khi dev. `title.template = '%s | Chợ Pass Sinh Viên'`, `openGraph` (`siteName`, `locale: 'vi_VN'`, `type: 'website'`, `images`), `twitter: summary_large_image`, `alternates.canonical`. Bỏ `keywords`.
+- Ảnh OG mặc định 1200×630: nếu repo có font tiếng Việt cục bộ thì dùng `opengraph-image.tsx` (`next/og`); nếu không, KHÔNG tải font từ internet lúc build. Dùng `public/og-default.png` do chủ dự án cung cấp và ghi vào "Việc chủ dự án tự làm" kèm TODO.
+- `/listings/[id]` có `generateMetadata`: đọc tin bằng Admin SDK phía server, chỉ tin `active|reserved|sold`, tuyệt đối không đọc `listingsPrivate`; title gồm tên món + giá (`vi-VN`), description tối đa 150 ký tự, ảnh OG là ảnh đầu tiên; tin không tồn tại ⇒ `notFound()`; tin không còn `active` ⇒ `robots: { index: false }`.
+- Trang riêng tư (`/auth/*`, `/profile`, `/messages`, `/my-listings`, `/listings/new`, `/admin/*`) có `robots: { index: false }`.
+- `src/app/sitemap.ts` (trang tĩnh + tối đa 500 tin `active` mới nhất, có `lastModified`) và `src/app/robots.ts` (chặn `/api/`, `/admin/`, `/auth/`, `/profile`, `/messages`, `/my-listings`, `/listings/new`; trỏ tới sitemap). Nếu chưa có dữ liệu thì sitemap chỉ có trang tĩnh, không lỗi.
+
+### 2. Tìm kiếm không dấu
+- `src/lib/search/normalize.ts`: `normalizeVi(s)` = lowercase → NFD → bỏ dấu tổ hợp `\u0300-\u036f` → `đ/Đ` thành `d` → bỏ ký tự đặc biệt → gộp khoảng trắng. Test: "Quạt Đứng Lifan" → "quat dung lifan", "ĐỒ BẾP" → "do bep", chuỗi rỗng, emoji.
+- `buildSearchTokens(title, extra?)`: token đã chuẩn hóa, duy nhất, kèm tiền tố độ dài 2–10 của mỗi token (để gõ dở vẫn khớp), tối đa 60 phần tử. Thêm vào doc tin ở `/api/listings/create` (và chỗ sửa tin nếu có) dưới field `searchTokens`.
+- Truy vấn: tách từ khóa đã chuẩn hóa, dùng `array-contains` với token dài nhất, các token còn lại lọc thêm ở phía thực thi (Firestore không có AND cho nhiều `array-contains`). Điều chỉnh theo kiến trúc thật (Q12); nếu hiện đang quét toàn bộ ở client thì chuyển sang cách trên. DB trống nên chưa cần backfill; nếu phát hiện đã có doc cũ thì viết `scripts/backfill-search-tokens.ts` (chạy thử bằng emulator, không chạy trên production).
+- Phân trang bằng cursor: `orderBy('createdAt','desc')` + `limit(20)` + `startAfter(lastDoc)`, nút "Xem thêm" hoặc IntersectionObserver. `grep` mọi `.where(` trong code, suy ra tập composite index cần thiết (status + createdAt, status + category + createdAt, status + vùng/trường + createdAt, ...) và bổ sung vào `firestore.indexes.json`. Lưu ý emulator không bắt buộc index nên PHẢI rà bằng cách đọc code.
+
+### 3. Ảnh
+- `next.config.mjs`: thêm `images.remotePatterns` cho `firebasestorage.googleapis.com` (pathname `/v0/b/**`), `storage.googleapis.com`, `lh3.googleusercontent.com`; `images.formats: ['image/webp']`, `minimumCacheTTL` dài (ví dụ 31 ngày) để giảm số lần tối ưu.
+- Dùng `next/image` cho ảnh tin/avatar với `sizes` hợp lý (lưới 2 cột mobile: `(max-width: 640px) 50vw, 25vw`), `loading="lazy"`; `priority` chỉ cho ảnh đầu tiên của trang chi tiết (ứng viên LCP). Khung có `aspect-ratio` cố định để không nhảy layout.
+
+### 4. Security headers
+- Giữ các header hiện có. Thêm `Permissions-Policy: camera=(self), microphone=(), geolocation=(), payment=()` và `Strict-Transport-Security: max-age=31536000` (chưa `preload`, chưa `includeSubDomains`).
+- Thêm `Content-Security-Policy-Report-Only` (CHƯA enforce). Khởi điểm, điều chỉnh sau khi thử tay:
+  ```
+  default-src 'self';
+  script-src 'self' 'unsafe-inline' https://apis.google.com https://www.gstatic.com;
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob: https://firebasestorage.googleapis.com https://storage.googleapis.com https://lh3.googleusercontent.com;
+  connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com;
+  frame-src 'self' https://accounts.google.com;
+  frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  ```
+  Chỉ thêm `'unsafe-eval'` ở môi trường dev nếu cần. Ghi vào `docs/MANUAL_QA.md` mục "CSP": đăng nhập Google popup, đăng tin có ảnh, xem chi tiết, chat có ảnh; mở DevTools Console tìm vi phạm CSP; sửa chính sách cho tới khi sạch rồi mới đề xuất chủ dự án chuyển sang enforce.
+
+### 5. Biến môi trường
+- Bỏ fallback `"cho-pass-sv-dev"` trong `next.config.mjs`. Khi `process.env.VERCEL_ENV === 'production'` mà thiếu `FIREBASE_PROJECT_ID`/`NEXT_PUBLIC_FIREBASE_PROJECT_ID` ⇒ `throw` làm build fail với thông báo rõ. Các môi trường khác chỉ cảnh báo (để build local vẫn chạy).
+- `src/lib/env.ts` (server-only): schema Zod cho các biến server bắt buộc, `getServerEnv()` kiểm tra lười ở lần dùng đầu (không kiểm khi import lúc build tĩnh). Đồng bộ `.env.example` với danh sách này.
+
+### 6. Hiệu năng bundle
+- Chạy `npm run build`, chép bảng "First Load JS" theo từng route vào report. Route nào >200KB thì tìm nguyên nhân lớn nhất.
+- Làm các việc cụ thể nếu đúng thực trạng: import `firebase/storage` bằng dynamic import chỉ ở trang có upload; code chat chỉ tải ở `/messages`; đảm bảo chỉ dùng import modular của Firebase (không `compat`); `data/universities_vietnam.json` chỉ bundle ở nơi dùng `UniversitySelect`; font dùng `next/font` thay vì thẻ link nếu đang dùng Google Fonts qua CSS.
+- Lighthouse chỉ chạy nếu môi trường có sẵn Chrome; không có thì ghi "chưa đo". KHÔNG bịa điểm số.
+
+### 7. Test
+`normalizeVi`, `buildSearchTokens`, hàm dựng title/description OG, danh sách đường dẫn trong `robots`/`sitemap`.
+
+### 8. Chạy toàn bộ gate, commit.
+
+## Nghiệm thu
+Trang chủ và trang chi tiết có đủ thẻ OG; tìm "quat" ra "quạt" (có test); mọi query có index khai báo; build production fail khi thiếu project id; CSP ở chế độ Report-Only.
+
+## Việc chủ dự án tự làm (ghi vào report)
+Deploy index: `firebase deploy --only firestore:indexes`; cung cấp `public/og-default.png` nếu chưa có; đặt `NEXT_PUBLIC_SITE_URL`.
+Đọc và tuân thủ tuyệt đối `docs/HARDENING_RULES.md`, rồi đọc `docs/AUDIT.md` (Q9). Checkout `hardening/all`. Prompt 0–7 đã xong. Helper `verifyCronRequest` và `vercel.json` đã có từ Prompt 5.
+
+# PROMPT 8 — Edge cases nghiệp vụ + nghiệm thu toàn bộ
+
+## Mục tiêu
+Xử lý các tình huống thực tế dễ gây lỗi (giữ chỗ, múi giờ, xóa tài khoản, ảnh rác) và chốt toàn bộ đợt hardening bằng báo cáo và checklist deploy.
+
+## Phạm vi
+Được sửa: route reservation, `src/lib/time.ts`, route xóa tài khoản, cron mới, `vercel.json`, README, docs. Việc ghi "đề xuất" (không code) được đánh dấu rõ.
+
+## Các bước
+
+### 1. Giữ chỗ (reservation)
+Đọc kỹ code hiện tại (Q9), sửa theo thực trạng:
+- Tạo giữ chỗ trong một Firestore transaction: kiểm tin còn `active`, chưa có giữ chỗ mở, người giữ ≠ người bán, người giữ đã verified. Hai người bấm cùng lúc thì chỉ một người thành công, người kia nhận 409 "Món đồ vừa được người khác giữ chỗ."
+- Máy trạng thái hợp lệ: `active → reserved → sold`; `reserved → active` khi hủy hoặc hết hạn. Chặn mọi chuyển trạng thái khác ở server (ví dụ `sold → active`).
+- Hạn giữ chỗ: `expiresAt` (mặc định 24 giờ, đặt trong `src/config/`). Hàm `expireIfNeeded(tx, reservation)` chạy khi đọc/tạo/thao tác (lazy expire) + cron `/api/cron/expire-reservations` chạy hằng ngày để dọn phần còn sót.
+- Mỗi người mua tối đa 2 giữ chỗ đang mở; vượt ⇒ 409.
+- Đề xuất, KHÔNG code nếu chưa có sẵn: phạt "không đến" (đếm `noShowCount`, tạm khóa giữ chỗ 7 ngày sau 3 lần). Chỉ ghi vào report để chủ dự án quyết.
+- Test: đua hai người giữ cùng lúc, hết hạn rồi giữ lại, vượt giới hạn 2, chuyển trạng thái sai, người bán tự giữ chỗ.
+
+### 2. Múi giờ & hạn pass
+`src/lib/time.ts`: `VN_TZ = 'Asia/Ho_Chi_Minh'`; `parseDeadlineVN('YYYY-MM-DD')` ⇒ thời điểm 23:59:59 giờ VN (Việt Nam không có giờ mùa hè nên dùng offset +07:00); `isExpiredVN(deadline, now)`; `formatVN(date)` bằng `Intl.DateTimeFormat('vi-VN', { timeZone: VN_TZ })`. Mọi tính toán hạn ở server dùng các hàm này (Vercel chạy UTC); client chỉ hiển thị. Nhãn "Pass trong ngày" dựa trên công tắc `urgent` do người đăng bật, hiển thị hạn tương đối ("còn 5 giờ"). Tin hết hạn: cron `/api/cron/expire-listings` chuyển `status` sang `expired` (feed chỉ lấy `active`), trang chi tiết hiện "Đã hết hạn" nếu quá hạn dù cron chưa chạy. Test: ranh giới nửa đêm (23:59:59 và 00:00:00 giờ VN), UTC lệch ngày, năm nhuận.
+
+### 3. Xóa tài khoản (`/api/account/delete`)
+Idempotent và có thể chạy lại khi lỗi giữa chừng (đánh dấu `deletionStartedAt`):
+1. Hủy giữ chỗ đang mở và thông báo bên còn lại.
+2. Chuyển tin đang đăng sang `removed`, xóa ảnh trong `public/listings/{uid}/`.
+3. Xóa favorites, follows, notifications của user; xóa hồ sơ `verifications`, `usersPrivate`, ảnh thẻ, ảnh đại diện.
+4. Ẩn danh hóa thay vì xóa review/tin nhắn của người khác (đổi tên hiển thị thành "Người dùng đã xóa", bỏ `photoURL`).
+5. `users/{uid}`: đặt `deleted: true` và xóa thông tin định danh; cuối cùng `auth.deleteUser(uid)`.
+Dùng batch tối đa 400 thao tác mỗi lượt. Test với admin mock: chạy lại lần hai không lỗi, ẩn danh đúng, không xóa nhầm dữ liệu người khác.
+
+### 4. Dọn ảnh rác
+Cron `/api/cron/cleanup-orphan-images` (hằng ngày): liệt kê thư mục `public/listings/{uid}/{draftId}/` cũ hơn 24 giờ mà không có doc `listings/{draftId}`, xóa; mỗi lần tối đa 500 file; log số lượng. Thêm cả ba cron mới vào `vercel.json`. Test hàm thuần chọn thư mục mồ côi.
+
+### 5. Các điểm còn lại
+- Danh mục "Xe cộ": đã có cảnh báo ở Prompt 6; không thêm gì ở server.
+- Xác minh lại hằng năm cho SV đã ra trường: chỉ ghi đề xuất vào report (`verifiedAt`, `reverifyAfter`), không code.
+
+### 6. Nghiệm thu toàn bộ
+- Chạy: `npx tsc --noEmit`, `npm run lint`, `npm test`, `npm run test:rules`, `npm run build`, `npm audit --omit=dev`. Chép kết quả (số test, số route build) vào report.
+- Quét sót: không còn `data:image`/base64 trong luồng tin đăng; không còn `localStorage` ở logic quyết định bảo mật; không còn `console.log` chứa dữ liệu người dùng; không còn Map in-memory làm rate limit; không còn đường dẫn `public/listings/{listingId}/` kiểu cũ.
+- Hoàn thiện `docs/MANUAL_QA.md` (10–15 kịch bản chủ dự án tự thử): đăng nhập Google, nộp hồ sơ thẻ, admin duyệt, đăng tin có ảnh trên iPhone và Android (4G chậm), xem liên hệ khi chưa/đã verified, giữ chỗ từ hai tài khoản cùng lúc, chat có ảnh, xóa tài khoản, chia sẻ link tin vào Zalo xem preview, CSP không báo lỗi.
+- Cập nhật README cho khớp thực tế: script `test:rules`, đường dẫn Storage mới, các cron và biến môi trường, danh mục việc cần làm trước khi mở cho người dùng thật.
+- Hoàn thiện `docs/HARDENING_REPORT.md` với phần tổng hợp đầu file: bảng H1–H16 (trạng thái cuối), tổng hợp "Việc chủ dự án tự làm" theo ĐÚNG THỨ TỰ deploy:
+  1. `firebase deploy --only firestore:rules,firestore:indexes,storage`
+  2. Đặt biến môi trường trên Vercel (`STUDENT_ID_HMAC_SECRET`, `CRON_SECRET`, `ADMIN_EMAIL`, `NEXT_PUBLIC_SITE_URL`, project id).
+  3. Bật Firestore TTL (`rateLimits`, `idempotency`), áp lifecycle bucket 30 ngày, tạo Storage bucket nếu chưa có.
+  4. Bật 2FA cho admin, đặt budget alert.
+  5. Deploy Vercel rồi chạy `docs/MANUAL_QA.md`.
+- Tổng hợp "Quyết định cần chủ dự án xác nhận" và "Phát hiện thêm".
+
+## Nghiệm thu
+Mọi gate xanh; `docs/HARDENING_REPORT.md` đầy đủ; không còn mục nào ở H1–H16 ở trạng thái chưa kết luận.
+
+## Trả lời cuối
+Tóm tắt tối đa 10 dòng: đã sửa gì, còn tồn đọng gì, 3 việc chủ dự án phải làm ngay trước khi deploy.

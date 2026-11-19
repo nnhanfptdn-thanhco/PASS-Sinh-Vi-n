@@ -1,4 +1,3 @@
-import "server-only";
 import { adminDb, hasAdminCredentials } from "@/lib/firebase/admin";
 import { isPastDeadline, todayVN } from "@/lib/utils/date";
 

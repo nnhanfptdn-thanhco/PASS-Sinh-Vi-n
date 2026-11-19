@@ -1,4 +1,3 @@
-import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApprovedStudent } from "@/lib/auth/server";
 import { readJson, withApi, ApiError } from "@/lib/server/http";
