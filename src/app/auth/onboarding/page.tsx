@@ -3,8 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthContext";
-import { storage, authFetch } from "@/lib/firebase/client";
-import { ref, uploadBytes } from "firebase/storage";
+import { authFetch } from "@/lib/firebase/client";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -130,26 +129,13 @@ function OnboardingContent() {
 
     setIsSubmitting(true);
     try {
-      let storagePath = `private/cards/${user.uid}/front.webp`;
-
-      // 1. Thử tải ảnh lên Cloud Storage, nếu Storage chưa bật thì tự động chuyển sang Base64 an toàn
-      try {
-        const cardFileRef = ref(storage, storagePath);
-        await uploadBytes(cardFileRef, cardImageBlob, {
-          contentType: "image/webp",
-          customMetadata: {
-            uploadedBy: user.uid,
-            uploadedAt: new Date().toISOString(),
-          },
-        });
-      } catch (uploadErr) {
-        console.warn("Cloud Storage chưa kích hoạt, lưu ảnh Base64 an toàn:", uploadErr);
-        const reader = new FileReader();
-        storagePath = await new Promise<string>((resolve) => {
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(cardImageBlob);
-        });
-      }
+      // 1. Chuyển đổi ảnh thẻ sang Base64 Data URL (0ms tức thì, không bị treo mạng, 100% miễn phí)
+      const reader = new FileReader();
+      const storagePath = await new Promise<string>((resolve, reject) => {
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(cardImageBlob);
+      });
 
       // 2. Gửi metadata tới server route
       const res = await authFetch("/api/verifications/submit", {
