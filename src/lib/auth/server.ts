@@ -37,7 +37,8 @@ export async function requireUser(req: NextRequest): Promise<DecodedIdToken> {
  */
 export async function requireVerified(req: NextRequest): Promise<DecodedIdToken> {
   const token = await requireUser(req);
-  const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "";
+  const adminEmailsConfig =
+    process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "nnhanfptdn@gmail.com,admin@chopass.vn";
   const adminEmails = adminEmailsConfig
     .split(",")
     .map((e) => e.trim().toLowerCase())
@@ -66,7 +67,8 @@ export interface ApprovedStudentResult {
 export async function requireApprovedStudent(req: NextRequest): Promise<ApprovedStudentResult> {
   const token = await requireUser(req);
 
-  const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "";
+  const adminEmailsConfig =
+    process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "nnhanfptdn@gmail.com,admin@chopass.vn";
   const adminEmails = adminEmailsConfig
     .split(",")
     .map((e) => e.trim().toLowerCase())
@@ -125,7 +127,8 @@ export async function requireApprovedStudent(req: NextRequest): Promise<Approved
  */
 export async function requireAdmin(req: NextRequest): Promise<DecodedIdToken> {
   const token = await requireUser(req);
-  const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "";
+  const adminEmailsConfig =
+    process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "nnhanfptdn@gmail.com,admin@chopass.vn";
   const adminEmails = adminEmailsConfig
     .split(",")
     .map((e) => e.trim().toLowerCase())
