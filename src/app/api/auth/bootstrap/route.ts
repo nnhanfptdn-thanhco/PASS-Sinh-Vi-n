@@ -2,12 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/server/auth-guard";
 import { withApi } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
-import { adminAuth, adminDb, FieldValue } from "@/lib/firebase/admin";
+import { adminAuth, adminDb, FieldValue, hasAdminCredentials } from "@/lib/firebase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const POST = withApi(async (req: NextRequest) => {
+  if (!hasAdminCredentials) {
+    return NextResponse.json({
+      ok: true,
+      claimsChanged: false,
+      message: "Admin credentials pending configuration",
+    });
+  }
+
   const auth = await requireAuth(req);
   const token = auth.token;
   const uid = auth.uid;
@@ -111,6 +119,29 @@ export const POST = withApi(async (req: NextRequest) => {
         verified: true,
         role: "admin",
       });
+
+      // Tự động duyệt hồ sơ thẻ sinh viên và cập nhật users/{uid} cho admin test
+      await adminDb.collection("verifications").doc(uid).set(
+        {
+          uid,
+          status: "approved",
+          realName: token.name || "Quản trị viên",
+          displayName: token.name || "Quản trị viên",
+          schoolCode: "ADMIN",
+          schoolName: "Ban Quản Trị Hệ Thống",
+          approvedAt: FieldValue.serverTimestamp(),
+          reviewerId: "system_bootstrap",
+        },
+        { merge: true }
+      );
+
+      await adminDb.collection("users").doc(uid).set(
+        {
+          verified: true,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
 
       claimsChanged = true;
 

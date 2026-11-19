@@ -1,5 +1,5 @@
 import "server-only";
-import { adminDb } from "@/lib/firebase/admin";
+import { adminDb, hasAdminCredentials } from "@/lib/firebase/admin";
 import { isPastDeadline, todayVN } from "@/lib/utils/date";
 
 export interface PublicListingDTO {
@@ -153,6 +153,9 @@ export function isListingPubliclyVisible(
  * Lấy hồ sơ công khai của người bán (Không chứa PII)
  */
 export async function getSellerPublicProfile(uid: string): Promise<PublicSellerProfile | null> {
+  if (!hasAdminCredentials) {
+    return null;
+  }
   const userSnap = await adminDb.collection("users").doc(uid).get();
   if (!userSnap.exists) {
     return null;
@@ -192,6 +195,9 @@ export async function getPublicListingById(
   id: string,
   now: Date = new Date()
 ): Promise<{ listing: PublicListingDTO; seller: PublicSellerProfile } | null> {
+  if (!hasAdminCredentials) {
+    return null;
+  }
   const docSnap = await adminDb.collection("listings").doc(id).get();
   if (!docSnap.exists) {
     return null;
@@ -227,6 +233,9 @@ export async function getSellerActiveListings(
   sellerId: string,
   now: Date = new Date()
 ): Promise<PublicListingDTO[]> {
+  if (!hasAdminCredentials) {
+    return [];
+  }
   const currentToday = todayVN(now);
   const querySnap = await adminDb
     .collection("listings")
@@ -263,6 +272,9 @@ export async function getSellerRecentReviews(
   targetUserId: string,
   limitCount = 5
 ): Promise<PublicReviewDTO[]> {
+  if (!hasAdminCredentials) {
+    return [];
+  }
   try {
     const snap = await adminDb
       .collection("reviews")
@@ -329,6 +341,9 @@ export async function searchListings(
   params: SearchListingsParams,
   now: Date = new Date()
 ): Promise<SearchListingsResult> {
+  if (!hasAdminCredentials) {
+    return { items: [] };
+  }
   const currentToday = todayVN(now);
   const limitCount = Math.min(50, Math.max(1, params.limit || 20));
   const sortMode = params.sort || "relevant";

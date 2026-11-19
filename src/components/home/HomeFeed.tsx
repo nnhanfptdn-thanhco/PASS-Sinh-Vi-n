@@ -19,6 +19,20 @@ export function HomeFeed({
   const [nextCursor, setNextCursor] = React.useState<string | undefined>(initialCursor);
   const [isLoadingMore, setIsLoadingMore] = React.useState(false);
 
+  React.useEffect(() => {
+    if (initialItems.length === 0) {
+      fetch("/api/listings/search?sort=newest&limit=12")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && Array.isArray(data.items) && data.items.length > 0) {
+            setItems(data.items);
+            if (data.nextCursor) setNextCursor(data.nextCursor);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [initialItems.length]);
+
   const handleLoadMore = async () => {
     if (!nextCursor || isLoadingMore) return;
     setIsLoadingMore(true);

@@ -34,7 +34,14 @@ export async function requireUser(req: NextRequest): Promise<DecodedIdToken> {
  */
 export async function requireVerified(req: NextRequest): Promise<DecodedIdToken> {
   const token = await requireUser(req);
-  if (token.verified !== true && token.admin !== true) {
+  const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "";
+  const adminEmails = adminEmailsConfig
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  const isEmailAdmin = token.email ? adminEmails.includes(token.email.toLowerCase()) : false;
+
+  if (token.verified !== true && token.admin !== true && !isEmailAdmin) {
     throw new HttpError(403, "Tài khoản cần được xác minh thẻ sinh viên.");
   }
   return token;
@@ -56,13 +63,28 @@ export interface ApprovedStudentResult {
 export async function requireApprovedStudent(req: NextRequest): Promise<ApprovedStudentResult> {
   const token = await requireUser(req);
 
+  const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "";
+  const adminEmails = adminEmailsConfig
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  const isEmailAdmin = token.email ? adminEmails.includes(token.email.toLowerCase()) : false;
+
   // Admin có thể bỏ qua kiểm tra hồ sơ thẻ sinh viên
-  if (token.admin === true || token.role === "admin") {
-    const userSnap = await adminDb.collection("users").doc(token.uid).get();
+  if (token.admin === true || token.role === "admin" || isEmailAdmin) {
+    let userDoc: Record<string, unknown> = { displayName: token.name || "Quản trị viên" };
+    try {
+      const userSnap = await adminDb.collection("users").doc(token.uid).get();
+      if (userSnap.exists) {
+        userDoc = userSnap.data() as Record<string, unknown>;
+      }
+    } catch {
+      // Fallback an toàn khi chưa thiết lập Firebase Admin
+    }
     return {
       token,
       verification: { status: "approved", schoolCode: "ADMIN", role: "admin" },
-      userDoc: userSnap.exists ? (userSnap.data() as Record<string, unknown>) : { displayName: "Quản trị viên" },
+      userDoc,
     };
   }
 
@@ -100,7 +122,14 @@ export async function requireApprovedStudent(req: NextRequest): Promise<Approved
  */
 export async function requireAdmin(req: NextRequest): Promise<DecodedIdToken> {
   const token = await requireUser(req);
-  if (token.admin !== true && token.role !== "admin") {
+  const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "";
+  const adminEmails = adminEmailsConfig
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  const isEmailAdmin = token.email ? adminEmails.includes(token.email.toLowerCase()) : false;
+
+  if (token.admin !== true && token.role !== "admin" && !isEmailAdmin) {
     throw new HttpError(403, "Chỉ quản trị viên mới có quyền này.");
   }
   return token;

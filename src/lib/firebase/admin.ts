@@ -64,6 +64,10 @@ function initAdminApp(): App {
 
 const app = initAdminApp();
 
+export const hasAdminCredentials = Boolean(
+  isEmulator || (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY)
+);
+
 export const adminAuth = getAuth(app);
 export const adminDb = getFirestore(app);
 export const adminStorage = getStorage(app);
