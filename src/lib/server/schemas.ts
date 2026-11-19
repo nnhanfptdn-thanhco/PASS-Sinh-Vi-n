@@ -63,7 +63,7 @@ export const createListingSchema = z
       .optional(),
     images: z
       .array(z.string())
-      .min(3, "Vui lòng tải tối thiểu 3 ảnh thực tế")
+      .min(1, "Vui lòng tải tối thiểu 1 ảnh thực tế")
       .max(10, "Tối đa 10 ảnh"),
     thumbs: z.array(z.string()).max(10).optional(),
   })

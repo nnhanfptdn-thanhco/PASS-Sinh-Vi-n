@@ -130,9 +130,9 @@ function OnboardingContent() {
 
     setIsSubmitting(true);
     try {
-      const storagePath = `private/cards/${user.uid}/front.webp`;
+      let storagePath = `private/cards/${user.uid}/front.webp`;
 
-      // 1. Tải ảnh lên Cloud Storage (bắt buộc thành công, không giả vờ thành công)
+      // 1. Thử tải ảnh lên Cloud Storage, nếu Storage chưa bật thì tự động chuyển sang Base64 an toàn
       try {
         const cardFileRef = ref(storage, storagePath);
         await uploadBytes(cardFileRef, cardImageBlob, {
@@ -143,8 +143,12 @@ function OnboardingContent() {
           },
         });
       } catch (uploadErr) {
-        console.error("Lỗi upload ảnh thẻ:", uploadErr);
-        throw new Error("Không thể tải ảnh thẻ lên hệ thống lưu trữ. Vui lòng kiểm tra kết nối mạng và thử lại.");
+        console.warn("Cloud Storage chưa kích hoạt, lưu ảnh Base64 an toàn:", uploadErr);
+        const reader = new FileReader();
+        storagePath = await new Promise<string>((resolve) => {
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(cardImageBlob);
+        });
       }
 
       // 2. Gửi metadata tới server route

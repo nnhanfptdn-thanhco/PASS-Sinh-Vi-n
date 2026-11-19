@@ -126,7 +126,7 @@ export async function compressListingImage(file: File): Promise<CompressedResult
     const { width: targetWidth, height: targetHeight } = computeTargetSize(
       sourceWidth,
       sourceHeight,
-      1600
+      960
     );
 
     const canvas = document.createElement("canvas");
@@ -141,7 +141,7 @@ export async function compressListingImage(file: File): Promise<CompressedResult
 
     // 2. Thử xuất WebP trước
     let outputBlob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob((b) => resolve(b), "image/webp", 0.8)
+      canvas.toBlob((b) => resolve(b), "image/webp", 0.78)
     );
 
     let finalMimeType: "image/webp" | "image/jpeg" = "image/webp";

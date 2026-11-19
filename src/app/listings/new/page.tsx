@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { RequireVerified } from "@/components/auth/RequireVerified";
 import { storage, authFetch } from "@/lib/firebase/client";
-import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
+import { ref, deleteObject } from "firebase/storage";
 import { compressListingImage } from "@/lib/image/compress";
 import { todayVN, addDaysVN } from "@/lib/utils/date";
 import categoriesData from "../../../../data/categories.json";
@@ -46,7 +46,7 @@ interface UploadedImageItem {
 }
 
 // Tạo ảnh thumbnail 480px phía client
-async function createThumbBlob(file: File, maxEdge = 480, quality = 0.75): Promise<Blob> {
+async function createThumbBlob(file: File, maxEdge = 320, quality = 0.7): Promise<Blob> {
   const url = URL.createObjectURL(file);
   try {
     const img = new Image();
@@ -205,71 +205,46 @@ export default function NewListingPage() {
 
       setImageItems((prev) => [...prev, newItem]);
 
-      // Nén và upload
+      // Nén và chuyển đổi sang Base64 WebP (100% miễn phí, không cần thẻ ngân hàng / Cloud Storage)
       try {
+        setImageItems((prev) =>
+          prev.map((item) => (item.id === localId ? { ...item, progress: 40 } : item))
+        );
         const compressed = await compressListingImage(file);
         const thumbBlob = await createThumbBlob(file);
 
-        const ext = compressed.extension;
-        const mainPath = `public/listings/${user.uid}/${draftId}/img_${localId}.${ext}`;
-        const thumbPath = `public/listings/${user.uid}/${draftId}/thumb_${localId}.webp`;
+        setImageItems((prev) =>
+          prev.map((item) => (item.id === localId ? { ...item, progress: 80 } : item))
+        );
 
-        const mainRef = ref(storage, mainPath);
-        const thumbRef = ref(storage, thumbPath);
+        const blobToDataUrl = (blob: Blob): Promise<string> =>
+          new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
 
-        // Upload main
-        const uploadTask = uploadBytesResumable(mainRef, compressed.blob, {
-          contentType: compressed.mimeType,
-          customMetadata: { uploadedBy: user.uid, draftId },
-        });
+        const mainUrl = await blobToDataUrl(compressed.blob);
+        const thumbUrl = await blobToDataUrl(thumbBlob);
 
-        uploadTask.on(
-          "state_changed",
-          (snapshot) => {
-            const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 80) + 10;
-            setImageItems((prev) =>
-              prev.map((item) => (item.id === localId ? { ...item, progress: pct } : item))
-            );
-          },
-          (err) => {
-            console.error("Upload error:", err);
-            setImageItems((prev) =>
-              prev.map((item) =>
-                item.id === localId
-                  ? { ...item, status: "error", error: "Lỗi tải ảnh. Vui lòng thử lại." }
-                  : item
-              )
-            );
-          },
-          async () => {
-            // Upload thumb
-            await uploadBytesResumable(thumbRef, thumbBlob, {
-              contentType: "image/webp",
-              customMetadata: { uploadedBy: user.uid, draftId },
-            });
-
-            const mainUrl = await getDownloadURL(mainRef);
-            const thumbUrl = await getDownloadURL(thumbRef);
-
-            setImageItems((prev) =>
-              prev.map((item) =>
-                item.id === localId
-                  ? {
-                      ...item,
-                      status: "done",
-                      progress: 100,
-                      storageUrl: mainUrl,
-                      thumbUrl,
-                      storagePath: mainPath,
-                    }
-                  : item
-              )
-            );
-          }
+        setImageItems((prev) =>
+          prev.map((item) =>
+            item.id === localId
+              ? {
+                  ...item,
+                  status: "done",
+                  progress: 100,
+                  storageUrl: mainUrl,
+                  thumbUrl,
+                  storagePath: `data/${localId}`,
+                }
+              : item
+          )
         );
       } catch (err: unknown) {
-        console.error("Compression/Upload fail:", err);
-        const msg = err instanceof Error ? err.message : "Không thể nén hoặc tải ảnh";
+        console.error("Lỗi nén ảnh:", err);
+        const msg = err instanceof Error ? err.message : "Không thể nén ảnh";
         setImageItems((prev) =>
           prev.map((item) =>
             item.id === localId ? { ...item, status: "error", error: msg } : item
@@ -282,7 +257,7 @@ export default function NewListingPage() {
   const removeImage = async (index: number) => {
     const item = imageItems[index];
     if (item) {
-      if (item.storagePath) {
+      if (item.storagePath && !item.storagePath.startsWith("data/")) {
         deleteObject(ref(storage, item.storagePath)).catch(() => {});
       }
       URL.revokeObjectURL(item.previewUrl);
@@ -297,8 +272,8 @@ export default function NewListingPage() {
   const validateStep = (step: number): boolean => {
     setStepError(null);
     if (step === 1) {
-      if (doneImages.length < 3) {
-        setStepError("Vui lòng tải lên tối thiểu 3 ảnh thực tế của món đồ.");
+      if (doneImages.length < 1) {
+        setStepError("Vui lòng tải lên tối thiểu 1 ảnh thực tế của món đồ.");
         return false;
       }
       const uploadingCount = imageItems.filter((i) => i.status === "uploading").length;
@@ -526,7 +501,7 @@ export default function NewListingPage() {
                     Tải từ 3 đến 10 ảnh. Bấm biểu tượng ngôi sao để chọn làm ảnh bìa.
                   </p>
                 </div>
-                <Badge variant={doneImages.length >= 3 ? "verified" : "urgent"}>
+                <Badge variant={doneImages.length >= 1 ? "verified" : "urgent"}>
                   {doneImages.length}/10 ảnh đã tải
                 </Badge>
               </div>
@@ -622,9 +597,9 @@ export default function NewListingPage() {
                 )}
               </div>
 
-              {doneImages.length < 3 && (
+              {doneImages.length < 1 && (
                 <p className="text-xs text-amber-600 font-medium">
-                  * Vui lòng tải tối thiểu 3 ảnh góc khác nhau của món đồ để người mua dễ đánh giá.
+                  * Vui lòng tải tối thiểu 1 ảnh thực tế của món đồ để người mua dễ đánh giá.
                 </p>
               )}
 
@@ -632,7 +607,7 @@ export default function NewListingPage() {
                 <Button
                   variant="primary"
                   size="md"
-                  disabled={doneImages.length < 3}
+                  disabled={doneImages.length < 1}
                   rightIcon={<ArrowRight className="w-4 h-4" />}
                   onClick={() => goToNextStep(2)}
                 >

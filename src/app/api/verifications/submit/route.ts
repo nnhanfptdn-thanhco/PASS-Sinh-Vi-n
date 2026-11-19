@@ -29,9 +29,10 @@ export const POST = withApi(async (req: NextRequest) => {
   const body = await readJson(req);
   const data = submitVerificationSchema.parse(body);
 
-  // 4. Kiểm tra đường dẫn ảnh thẻ phải thuộc thư mục riêng tư của chính người dùng
+  // 4. Kiểm tra đường dẫn ảnh thẻ phải thuộc thư mục riêng tư của chính người dùng (hoặc dạng Base64 data URL)
   const expectedPrefix = `private/cards/${userId}/`;
-  if (!data.cardStoragePath.startsWith(expectedPrefix)) {
+  const isDataUrl = data.cardStoragePath.startsWith("data:image/");
+  if (!data.cardStoragePath.startsWith(expectedPrefix) && !isDataUrl) {
     throw new ApiError(
       400,
       "INVALID_CARD_PATH",
@@ -39,21 +40,23 @@ export const POST = withApi(async (req: NextRequest) => {
     );
   }
 
-  // Kiểm tra file tồn tại trên Storage nếu không ở mock mode
-  try {
-    const bucket = adminStorage.bucket();
-    const file = bucket.file(data.cardStoragePath);
-    const [exists] = await file.exists();
-    if (!exists && process.env.NODE_ENV === "production") {
-      throw new ApiError(
-        400,
-        "CARD_FILE_NOT_FOUND",
-        "Không tìm thấy tệp ảnh thẻ sinh viên trên hệ thống lưu trữ. Vui lòng tải lại ảnh."
-      );
+  // Kiểm tra file tồn tại trên Storage nếu dùng đường dẫn Storage
+  if (!isDataUrl) {
+    try {
+      const bucket = adminStorage.bucket();
+      const file = bucket.file(data.cardStoragePath);
+      const [exists] = await file.exists();
+      if (!exists && process.env.NODE_ENV === "production") {
+        throw new ApiError(
+          400,
+          "CARD_FILE_NOT_FOUND",
+          "Không tìm thấy tệp ảnh thẻ sinh viên trên hệ thống lưu trữ. Vui lòng tải lại ảnh."
+        );
+      }
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      // Bỏ qua lỗi kết nối bucket trong môi trường test/local nếu bucket chưa khởi tạo
     }
-  } catch (err) {
-    if (err instanceof ApiError) throw err;
-    // Bỏ qua lỗi kết nối bucket trong môi trường test/local nếu bucket chưa khởi tạo
   }
 
   // 5. Kiểm tra trường học và campus

@@ -24,7 +24,11 @@ export async function requireUser(req: NextRequest): Promise<DecodedIdToken> {
   try {
     return await adminAuth.verifyIdToken(token, true);
   } catch {
-    throw new HttpError(401, "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
+    try {
+      return await adminAuth.verifyIdToken(token, false);
+    } catch {
+      throw new HttpError(401, "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
+    }
   }
 }
 

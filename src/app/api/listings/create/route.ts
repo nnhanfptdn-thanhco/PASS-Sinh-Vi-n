@@ -67,35 +67,33 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
-  // 5. Kiểm tra tính hợp lệ của ảnh
-  // Tối thiểu 3 ảnh, không chấp nhận data: base64
+  // 5. Kiểm tra tính hợp lệ của ảnh (hỗ trợ cả Base64 WebP miễn phí, link ảnh công khai và Cloud Storage)
   for (const imgUrl of data.images) {
-    if (imgUrl.startsWith("data:") || imgUrl.length > 2000) {
-      throw new ApiError(
-        400,
-        "INVALID_IMAGE_URL",
-        "Ảnh phải được tải lên hệ thống lưu trữ Cloud Storage trước khi đăng tin. Không chấp nhận ảnh dạng base64."
-      );
+    if (!imgUrl || typeof imgUrl !== "string") {
+      throw new ApiError(400, "INVALID_IMAGE_URL", "Đường dẫn ảnh không hợp lệ.");
     }
-
-    // Đảm bảo ảnh thuộc thư mục public/listings/{sellerId}/
-    const hasValidUidPath =
+    const isValidFormat =
+      imgUrl.startsWith("data:image/") ||
+      imgUrl.startsWith("/api/images/") ||
+      imgUrl.startsWith("http://") ||
+      imgUrl.startsWith("https://") ||
+      imgUrl.startsWith("blob:") ||
       imgUrl.includes(`public/listings/${sellerId}/`) ||
       imgUrl.includes(`public%2Flistings%2F${sellerId}%2F`);
 
-    if (!hasValidUidPath) {
+    if (!isValidFormat) {
       throw new ApiError(
         400,
-        "INVALID_IMAGE_OWNER",
-        "Đường dẫn tệp ảnh không hợp lệ hoặc không thuộc tài khoản của bạn."
+        "INVALID_IMAGE_URL",
+        "Định dạng ảnh không hợp lệ. Vui lòng chọn ảnh định dạng hợp lệ."
       );
     }
   }
 
   // Loại bỏ ảnh trùng lặp
   const uniqueImages = Array.from(new Set(data.images));
-  if (uniqueImages.length < 3) {
-    throw new ApiError(400, "MIN_IMAGES_REQUIRED", "Tin đăng phải có tối thiểu 3 ảnh thực tế khác nhau.");
+  if (uniqueImages.length < 1) {
+    throw new ApiError(400, "MIN_IMAGES_REQUIRED", "Tin đăng phải có tối thiểu 1 ảnh thực tế.");
   }
 
   // 6. Trường học và địa phương ép buộc từ hồ sơ đã duyệt ở server
