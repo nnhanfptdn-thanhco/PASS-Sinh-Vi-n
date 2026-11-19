@@ -29,8 +29,9 @@ if (isEmulator) {
 }
 
 function initAdminApp(): App {
-  if (getApps().length > 0) {
-    return getApps()[0];
+  const existingApps = getApps();
+  if (existingApps.length > 0) {
+    return existingApps[0];
   }
 
   const projectId =
@@ -38,33 +39,49 @@ function initAdminApp(): App {
     process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
     "cho-pass-sv";
 
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+  const rawKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
+  const privateKey = rawKey ? rawKey.replace(/\\n/g, "\n") : undefined;
 
-  // Khi kết nối Emulator hoặc trong quá trình build tĩnh trên hosting
-  if (isEmulator || (!clientEmail && !privateKey)) {
-    return initializeApp({ projectId });
+  const hasValidServiceAccount = Boolean(
+    clientEmail && privateKey && privateKey.includes("PRIVATE KEY")
+  );
+
+  if (hasValidServiceAccount && !isEmulator) {
+    try {
+      return initializeApp({
+        credential: cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
+        projectId,
+        storageBucket:
+          process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+          `${projectId}.appspot.com`,
+      });
+    } catch (err) {
+      console.warn("Lỗi khởi tạo Firebase Admin cert:", err);
+    }
   }
 
-  const serviceAccount: ServiceAccount = {
-    projectId,
-    clientEmail,
-    privateKey,
-  };
-
-  return initializeApp({
-    credential: cert(serviceAccount),
-    projectId,
-    storageBucket:
-      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-      `${projectId}.appspot.com`,
-  });
+  return initializeApp({ projectId });
 }
 
-const app = initAdminApp();
+let appInstance: App;
+try {
+  appInstance = initAdminApp();
+} catch {
+  appInstance = getApps()[0] || initializeApp({ projectId: "cho-pass-sv" });
+}
+
+export const app = appInstance;
 
 export const hasAdminCredentials = Boolean(
-  isEmulator || (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY)
+  isEmulator ||
+    (process.env.FIREBASE_CLIENT_EMAIL?.trim() &&
+      process.env.FIREBASE_PRIVATE_KEY?.trim() &&
+      process.env.FIREBASE_PRIVATE_KEY.includes("PRIVATE KEY"))
 );
 
 export const adminAuth = getAuth(app);

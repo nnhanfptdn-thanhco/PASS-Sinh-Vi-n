@@ -1,21 +1,14 @@
 import { NextResponse } from "next/server";
+import { hasAdminCredentials } from "@/lib/firebase/admin";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  try {
-    const admin = await import("@/lib/firebase/admin");
-    return NextResponse.json({
-      ok: true,
-      hasAdminCredentials: admin.hasAdminCredentials,
-      keys: Object.keys(admin),
-    });
-  } catch (err: any) {
-    return NextResponse.json({
-      ok: false,
-      errorName: err?.name,
-      errorMessage: err?.message,
-      errorStack: err?.stack,
-    });
-  }
+  return NextResponse.json({
+    ok: true,
+    hasAdminCredentials,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL ? "CONFIGURED" : "MISSING",
+    privateKey: process.env.FIREBASE_PRIVATE_KEY ? "CONFIGURED" : "MISSING",
+    timestamp: Date.now(),
+  });
 }
