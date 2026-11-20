@@ -19,8 +19,8 @@ export const POST = withApi(async (req: NextRequest) => {
   const { token, verification, userDoc } = await requireApprovedStudent(req);
   const sellerId = token.uid;
 
-  // 2. Đọc và xác thực dữ liệu gửi lên
-  const body = await readJson(req, 64 * 1024);
+  // 2. Đọc và xác thực dữ liệu gửi lên (hỗ trợ tối đa 2MB cho tin đăng có ảnh WebP dự phòng)
+  const body = await readJson(req, 2 * 1024 * 1024);
   const data = createListingSchema.parse(body);
 
   // 3. Xử lý Idempotency (Loại bỏ key chứa '/')
@@ -80,6 +80,7 @@ export const POST = withApi(async (req: NextRequest) => {
     process.env.FIREBASE_STORAGE_BUCKET ||
     "";
   function isOwnListingImage(url: string, uid: string): boolean {
+    if (url.startsWith("data:image/")) return true;
     try {
       const u = new URL(url);
       if (

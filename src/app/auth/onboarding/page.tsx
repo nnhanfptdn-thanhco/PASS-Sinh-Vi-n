@@ -130,13 +130,30 @@ function OnboardingContent() {
 
     setIsSubmitting(true);
     try {
-      // 1. Upload ảnh thẻ lên Storage riêng tư (chỉ chủ + admin đọc được)
+      // 1. Thử upload ảnh thẻ lên Firebase Storage riêng tư (timeout 8s để không bao giờ treo giao diện)
       const ext = cardImageBlob.type === "image/jpeg" ? "jpg" : "webp";
       const fileId = crypto.randomUUID().replace(/-/g, "").slice(0, 24); // khớp regex [A-Za-z0-9_-]{4,64}
       const storagePath = `private/cards/${user.uid}/${fileId}.${ext}`;
-      await uploadBytes(ref(storage, storagePath), cardImageBlob, {
-        contentType: cardImageBlob.type === "image/jpeg" ? "image/jpeg" : "image/webp",
-      });
+
+      let finalPath = storagePath;
+      try {
+        const uploadTask = uploadBytes(ref(storage, storagePath), cardImageBlob, {
+          contentType: cardImageBlob.type === "image/jpeg" ? "image/jpeg" : "image/webp",
+        });
+        const timeoutTask = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("STORAGE_TIMEOUT")), 6000)
+        );
+        await Promise.race([uploadTask, timeoutTask]);
+      } catch (storageErr) {
+        console.warn("Upload Storage quá 6s hoặc chưa kích hoạt bucket, chuyển sang cơ chế dự phòng an toàn:", storageErr);
+        // Fallback: Chuyển ảnh thẻ sang Base64 WebP nhẹ gửi trực tiếp lên server
+        const reader = new FileReader();
+        finalPath = await new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(cardImageBlob);
+        });
+      }
 
       // 2. Gửi metadata tới server route
       const res = await authFetch("/api/verifications/submit", {
@@ -144,7 +161,7 @@ function OnboardingContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...formData,
-          cardStoragePath: storagePath,
+          cardStoragePath: finalPath,
         }),
       });
 

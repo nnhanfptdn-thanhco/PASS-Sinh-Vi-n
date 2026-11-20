@@ -64,10 +64,10 @@ export const createListingSchema = z
       .nullable()
       .optional(),
     images: z
-      .array(z.string().max(1024))
+      .array(z.string().max(500000))
       .min(1, "Vui lòng tải tối thiểu 1 ảnh thực tế")
       .max(10, "Tối đa 10 ảnh"),
-    thumbs: z.array(z.string().max(1024)).max(10).optional(),
+    thumbs: z.array(z.string().max(500000)).max(10).optional(),
   })
   .strict();
 
@@ -98,6 +98,6 @@ export const submitVerificationSchema = z
     wardCode: z.string().max(32).optional(),
     dormOrAddress: z.string().max(200).optional(),
     isGraduating: z.boolean().optional(),
-    cardStoragePath: z.string().min(1, "Thiếu đường dẫn tệp ảnh thẻ").max(200, "Đường dẫn ảnh thẻ quá dài"),
+    cardStoragePath: z.string().min(1, "Thiếu đường dẫn tệp ảnh thẻ").max(500000, "Dữ liệu ảnh thẻ quá lớn"),
   })
   .strict();

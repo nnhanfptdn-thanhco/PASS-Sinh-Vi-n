@@ -39,15 +39,19 @@ export const GET = withApi(async (req: NextRequest) => {
       let signedCardUrl: string | null = null;
       const p = data.cardStoragePath as string | null;
 
-      if (p && !data.cardDeleted && p.startsWith("private/cards/")) {
-        try {
-          const [url] = await bucket.file(p).getSignedUrl({
-            action: "read",
-            expires: Date.now() + 5 * 60 * 1000, // 5 phút
-          });
-          signedCardUrl = url;
-        } catch {
-          /* file đã bị xóa hoặc không đọc được */
+      if (p && !data.cardDeleted) {
+        if (p.startsWith("private/cards/")) {
+          try {
+            const [url] = await bucket.file(p).getSignedUrl({
+              action: "read",
+              expires: Date.now() + 5 * 60 * 1000, // 5 phút
+            });
+            signedCardUrl = url;
+          } catch {
+            /* file đã bị xóa hoặc không đọc được */
+          }
+        } else if (p.startsWith("data:image/")) {
+          signedCardUrl = p;
         }
       }
 

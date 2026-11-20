@@ -217,14 +217,41 @@ export default function NewListingPage() {
         const mainPath = `${base}/${localId}.${ext}`;
         const thumbPath = `${base}/${localId}_t.webp`;
 
-        const [mainSnap, thumbSnap] = await Promise.all([
-          uploadBytes(ref(storage, mainPath), compressed.blob, { contentType }),
-          uploadBytes(ref(storage, thumbPath), thumbBlob, { contentType: "image/webp" }),
-        ]);
-        const [mainUrl, thumbUrl] = await Promise.all([
-          getDownloadURL(mainSnap.ref),
-          getDownloadURL(thumbSnap.ref),
-        ]);
+        let mainUrl = "";
+        let thumbUrl = "";
+        let storagePath = mainPath;
+
+        try {
+          const uploadPromise = Promise.all([
+            uploadBytes(ref(storage, mainPath), compressed.blob, { contentType }),
+            uploadBytes(ref(storage, thumbPath), thumbBlob, { contentType: "image/webp" }),
+          ]);
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("STORAGE_TIMEOUT")), 6000)
+          );
+          const [mainSnap, thumbSnap] = await Promise.race([uploadPromise, timeoutPromise]);
+          const [mUrl, tUrl] = await Promise.all([
+            getDownloadURL(mainSnap.ref),
+            getDownloadURL(thumbSnap.ref),
+          ]);
+          mainUrl = mUrl;
+          thumbUrl = tUrl;
+        } catch {
+          console.warn("Upload Storage quá 6s hoặc chưa kích hoạt, chuyển sang Base64 WebP nhẹ:");
+          const reader = new FileReader();
+          mainUrl = await new Promise<string>((resolve, reject) => {
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(compressed.blob);
+          });
+          const thumbReader = new FileReader();
+          thumbUrl = await new Promise<string>((resolve, reject) => {
+            thumbReader.onloadend = () => resolve(thumbReader.result as string);
+            thumbReader.onerror = reject;
+            thumbReader.readAsDataURL(thumbBlob);
+          });
+          storagePath = `data/${localId}.webp`;
+        }
 
         setImageItems((prev) =>
           prev.map((it) =>
@@ -235,7 +262,7 @@ export default function NewListingPage() {
                   progress: 100,
                   storageUrl: mainUrl,
                   thumbUrl,
-                  storagePath: mainPath,
+                  storagePath,
                 }
               : it
           )
