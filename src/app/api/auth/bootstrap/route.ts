@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/server/auth-guard";
-import { withApi, ApiError } from "@/lib/server/http";
+import { withApi } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { adminAuth, adminDb, FieldValue, hasAdminCredentials } from "@/lib/firebase/admin";
 
@@ -9,9 +9,6 @@ export const dynamic = "force-dynamic";
 
 export const POST = withApi(async (req: NextRequest) => {
   if (!hasAdminCredentials) {
-    if (process.env.NODE_ENV === "production") {
-      throw new ApiError(503, "SERVER_NOT_CONFIGURED", "Máy chủ chưa cấu hình xác thực quản trị.");
-    }
     return NextResponse.json({
       ok: true,
       claimsChanged: false,

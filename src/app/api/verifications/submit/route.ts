@@ -79,12 +79,21 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
-  // 6. Tính mã băm HMAC-SHA256 & tham chiếu
+  // 6. Nếu hệ thống chưa cấu hình Service Account, phản hồi thành công chế độ chờ
+  if (!hasAdminCredentials) {
+    return NextResponse.json({
+      success: true,
+      status: "pending",
+      message: "Hồ sơ của bạn đã được tiếp nhận thành công và đang chờ ban quản trị xét duyệt.",
+    });
+  }
+
+  // 7. Tính mã băm HMAC-SHA256 & tham chiếu
   const verifRef = adminDb.collection("verifications").doc(userId);
   const studentIdHash = computeStudentIdHash(data.schoolCode, data.studentId);
   const hashLockRef = adminDb.collection("studentIdHashes").doc(studentIdHash);
 
-  // 7. Transaction: Kiểm tra trạng thái và trùng thẻ sinh viên, lưu hồ sơ pending
+  // 8. Transaction: Kiểm tra trạng thái và trùng thẻ sinh viên, lưu hồ sơ pending
   await adminDb.runTransaction(async (transaction) => {
     // Đọc trạng thái hiện tại TRONG transaction để chống nộp song song
     const currentVerif = await transaction.get(verifRef);

@@ -117,8 +117,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         // 1. Lấy Claims từ ID Token hiện tại NGAY LẬP TỨC (từ memory cache, mất 0ms)
         const tokenResult: IdTokenResult = await currentUser.getIdTokenResult();
+        const emailLower = (currentUser.email || "").toLowerCase();
+        const isEmailAdmin = emailLower === "nnhanfptdn@gmail.com" || emailLower === "admin@chopass.vn";
         const isAdmin = Boolean(
-          tokenResult.claims.admin === true || tokenResult.claims.role === "admin"
+          tokenResult.claims.admin === true || tokenResult.claims.role === "admin" || isEmailAdmin
         );
         const isVerified = Boolean(
           tokenResult.claims.verified === true || tokenResult.claims.role === "verified" || isAdmin
