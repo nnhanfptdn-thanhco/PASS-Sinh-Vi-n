@@ -457,7 +457,10 @@ export function ListingDetailClient({
                     )}
                   </div>
                   <p className="text-xs text-text-secondary">
-                    {seller.rating} ★ · Đã bán {seller.completedDealsCount} món
+                    {seller.rating != null && seller.reviewsCount > 0
+                      ? `${seller.rating} ★ · `
+                      : "Chưa có đánh giá · "}
+                    Đã bán {seller.completedDealsCount} món
                   </p>
                 </div>
               </div>

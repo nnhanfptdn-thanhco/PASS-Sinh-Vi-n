@@ -5,16 +5,16 @@
  */
 
 // Regex kiểm tra số điện thoại VN sau khi loại bỏ dấu phân cách
-// 0 hoặc 84 hoặc +84 tiếp theo là 3, 5, 7, 8, 9 và 8 chữ số nữa (tổng 10 số với 0 hoặc 11-12 ký tự với 84/+84)
-const VN_PHONE_REGEX = /(?:(?:\+84|84|0)[35789]\d{8})\b/;
+// 0 hoặc 84 hoặc +84 tiếp theo là 3, 5, 7, 8, 9 và 8 chữ số nữa (lookbehind/lookahead chống bắt nhầm mã sản phẩm dài)
+const VN_PHONE_REGEX = /(?<![\d])(?:(?:\+84|84|0)[35789]\d{8})(?!\d)/;
 
 // URL & Email
 const URL_REGEX = /(?:https?:\/\/|www\.)[^\s/$.?#].[^\s]*/i;
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
 
-// Từ khóa mạng xã hội nhạy cảm kèm dấu hiệu liên hệ
+// Từ khóa mạng xã hội nhạy cảm kèm dấu hiệu liên hệ (loại trừ 'messenger bag')
 const SOCIAL_KEYWORD_REGEX =
-  /(?:zalo|fb\.com|facebook|messenger|telegram|t\.me|tiktok|viber|skype|wechat)\b/i;
+  /(?:zalo|fb\.com|facebook|messenger(?!\s*bag)|telegram|t\.me|tiktok|viber|skype|wechat)\b/i;
 
 // Các từ khóa nhắn tin riêng / trao đổi riêng kèm thông tin
 const PRIVATE_CONTACT_INTENT_REGEX = /\b(?:ib|inbox|liên hệ|nhắn tin|call|gọi|lh|sđt|sdt|hotline)[\s:]*(?:qua|tại|vào|cho)?[\s:]*(?:zalo|fb|facebook|số|\d)/i;

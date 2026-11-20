@@ -4,26 +4,39 @@ const firebaseProjectId =
   process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
   "cho-pass-sv-dev";
 
+const isDev = process.env.NODE_ENV !== "production";
+
+const remotePatterns = [
+  {
+    protocol: "https",
+    hostname: "firebasestorage.googleapis.com",
+  },
+  {
+    protocol: "https",
+    hostname: "images.unsplash.com",
+  },
+  {
+    protocol: "https",
+    hostname: "lh3.googleusercontent.com",
+  },
+];
+
+if (isDev) {
+  remotePatterns.push(
+    {
+      protocol: "http",
+      hostname: "127.0.0.1",
+    },
+    {
+      protocol: "http",
+      hostname: "localhost",
+    }
+  );
+}
+
 const nextConfig = {
   images: {
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "firebasestorage.googleapis.com",
-      },
-      {
-        protocol: "http",
-        hostname: "127.0.0.1",
-      },
-      {
-        protocol: "http",
-        hostname: "localhost",
-      },
-      {
-        protocol: "https",
-        hostname: "images.unsplash.com",
-      },
-    ],
+    remotePatterns,
   },
   experimental: {
     serverComponentsExternalPackages: ["firebase-admin"],
@@ -46,6 +59,14 @@ const nextConfig = {
         source: "/(.*)",
         headers: [
           {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains; preload",
+          },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=()",
+          },
+          {
             key: "Cross-Origin-Opener-Policy",
             value: "same-origin-allow-popups",
           },
@@ -60,6 +81,11 @@ const nextConfig = {
           {
             key: "X-Frame-Options",
             value: "DENY",
+          },
+          {
+            key: "Content-Security-Policy-Report-Only",
+            value:
+              "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://accounts.google.com; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://firebasestorage.googleapis.com https://accounts.google.com; frame-src 'self' https://*.firebaseapp.com https://accounts.google.com; img-src 'self' blob: data: https://firebasestorage.googleapis.com https://images.unsplash.com https://lh3.googleusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self';",
           },
         ],
       },

@@ -10,9 +10,7 @@ const isEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true";
 if (isEmulator) {
   process.env.FIRESTORE_EMULATOR_HOST =
     process.env.FIRESTORE_EMULATOR_HOST ||
-    process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_HOST
-      ? `${process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_HOST || "127.0.0.1"}:${process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_PORT || "8080"}`
-      : "127.0.0.1:8080";
+    `${process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_HOST || "127.0.0.1"}:${process.env.NEXT_PUBLIC_EMULATOR_FIRESTORE_PORT || "8080"}`;
 
   process.env.FIREBASE_AUTH_EMULATOR_HOST =
     process.env.FIREBASE_AUTH_EMULATOR_HOST ||
@@ -36,7 +34,11 @@ function initAdminApp(): App {
   const projectId =
     process.env.FIREBASE_PROJECT_ID ||
     process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-    "cho-pass-sv";
+    (process.env.NODE_ENV === "production" ? "" : "cho-pass-sv");
+
+  if (!projectId) {
+    throw new Error("FIREBASE_PROJECT_ID chưa được cấu hình.");
+  }
 
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
   const rawKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
@@ -45,6 +47,11 @@ function initAdminApp(): App {
   const hasValidServiceAccount = Boolean(
     clientEmail && privateKey && privateKey.includes("PRIVATE KEY")
   );
+
+  const storageBucket =
+    process.env.FIREBASE_STORAGE_BUCKET ||
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+    `${projectId}.appspot.com`;
 
   if (hasValidServiceAccount && !isEmulator) {
     try {
@@ -55,22 +62,32 @@ function initAdminApp(): App {
           privateKey,
         }),
         projectId,
-        storageBucket:
-          process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-          `${projectId}.appspot.com`,
+        storageBucket,
       });
     } catch (err) {
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(
+          `Lỗi khởi tạo Firebase Admin với Service Account: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
       console.warn("Lỗi khởi tạo Firebase Admin cert:", err);
     }
   }
 
-  return initializeApp({ projectId });
+  if (process.env.NODE_ENV === "production" && !isEmulator) {
+    throw new Error("Máy chủ production thiếu thông tin xác thực Firebase Admin Service Account.");
+  }
+
+  return initializeApp({ projectId, storageBucket });
 }
 
 let appInstance: App;
 try {
   appInstance = initAdminApp();
-} catch {
+} catch (e) {
+  if (process.env.NODE_ENV === "production") {
+    throw e;
+  }
   appInstance = getApps()[0] || initializeApp({ projectId: "cho-pass-sv" });
 }
 
@@ -94,8 +111,13 @@ export { FieldValue, Timestamp } from "firebase-admin/firestore";
  * Tuyệt đối không gửi mã gốc hay tính ở Client để chống đảo ngược.
  */
 export function computeStudentIdHash(schoolCode: string, studentId: string): string {
-  const secret =
-    process.env.STUDENT_ID_HMAC_SECRET || "cho-pass-sv-production-fallback-hmac-secret-salt-2026";
+  const secret = process.env.STUDENT_ID_HMAC_SECRET;
+  if (!secret || secret.length < 32) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("STUDENT_ID_HMAC_SECRET chưa cấu hình (>=32 ký tự).");
+    }
+  }
+  const key = secret || "dev-only-insecure-secret-do-not-use-in-prod-0000";
   const normalizedInput = `${schoolCode.trim().toUpperCase()}:${studentId.trim().toUpperCase()}`;
-  return crypto.createHmac("sha256", secret).update(normalizedInput).digest("hex");
+  return crypto.createHmac("sha256", key).update(normalizedInput).digest("hex");
 }

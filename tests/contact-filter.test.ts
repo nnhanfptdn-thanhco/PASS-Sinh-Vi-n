@@ -9,6 +9,10 @@ describe("Contact Info Filter (WP-0.3)", () => {
     expect(containsContactInfo("090 512 3456")).toBe(true);
     // SĐT có dấu chấm
     expect(containsContactInfo("0905.123.456")).toBe(true);
+    // SĐT đầu +84 có dấu chấm
+    expect(containsContactInfo("+84 905.123.456")).toBe(true);
+    // ib zalo
+    expect(containsContactInfo("ib zalo")).toBe(true);
     // SĐT đầu +84 có khoảng cách
     expect(containsContactInfo("+84 905 123 456")).toBe(true);
     // SĐT đầu 84 liền
@@ -27,6 +31,8 @@ describe("Contact Info Filter (WP-0.3)", () => {
   });
 
   it("phải chấp nhận các nội dung mô tả đồ dùng sinh viên hợp lệ", () => {
+    expect(containsContactInfo("Mã SP 2103456789012")).toBe(false);
+    expect(containsContactInfo("Túi messenger bag đen")).toBe(false);
     expect(containsContactInfo("Quạt Senko DR1608 giá 150000")).toBe(false);
     expect(containsContactInfo("Máy 1500W 2 chiếc năm 2023")).toBe(false);
     expect(containsContactInfo("Giáo trình Giải tích 1 tập 2")).toBe(false);

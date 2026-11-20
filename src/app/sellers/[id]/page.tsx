@@ -90,10 +90,16 @@ export default async function SellerProfilePage({
             <div className="p-2 bg-surface-muted rounded-xl">
               <div className="flex items-center justify-center gap-1 text-sm font-bold text-amber-500">
                 <Star className="w-4 h-4 fill-current" />
-                <span>{seller.rating.toFixed(1)}</span>
+                <span>
+                  {seller.rating != null && seller.reviewsCount > 0
+                    ? seller.rating.toFixed(1)
+                    : "—"}
+                </span>
               </div>
               <span className="text-[10px] text-text-muted">
-                {seller.reviewsCount} đánh giá
+                {seller.reviewsCount > 0
+                  ? `${seller.reviewsCount} đánh giá`
+                  : "Chưa có đánh giá"}
               </span>
             </div>
 

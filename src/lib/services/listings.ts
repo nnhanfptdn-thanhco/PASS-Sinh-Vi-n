@@ -1,16 +1,18 @@
 import { adminDb, hasAdminCredentials } from "@/lib/firebase/admin";
-import { isPastDeadline, todayVN } from "@/lib/utils/date";
+import { todayVN, isPastDeadline } from "@/lib/utils/date";
 
 export interface PublicListingDTO {
   id: string;
   sellerId: string;
   title: string;
+  titleNormalized: string;
   categoryId: string;
-  subcategory: string;
+  subcategory?: string | null;
   condition: string;
-  brandModel?: string;
-  usageTime?: string;
-  defects?: string;
+  brandModel?: string | null;
+  usageTime?: string | null;
+  defects?: string | null;
+  noDefects: boolean;
   description: string;
   price: number;
   originalPrice?: number;
@@ -49,7 +51,7 @@ export interface PublicSellerProfile {
   displayName: string;
   photoURL: string;
   verified: boolean;
-  rating: number;
+  rating: number | null;
   reviewsCount: number;
   completedDealsCount: number;
   joinDate: string;
@@ -70,12 +72,15 @@ export function toPublicListingDTO(
   const cover = (docData.coverImage as string) || images[0] || "";
   const coverThumb = (docData.coverThumb as string) || thumbs?.[0] || cover;
 
+  // Xử lý chuyển đổi Firestore Timestamp sang ISO string an toàn
   const rawCreatedAt = docData.createdAt as { toDate?: () => Date } | string | undefined;
-  let createdAtStr = new Date().toISOString();
+  let createdAtStr = "";
   if (rawCreatedAt && typeof rawCreatedAt === "object" && typeof rawCreatedAt.toDate === "function") {
     createdAtStr = rawCreatedAt.toDate().toISOString();
   } else if (typeof rawCreatedAt === "string") {
     createdAtStr = rawCreatedAt;
+  } else {
+    createdAtStr = new Date().toISOString();
   }
 
   const rawUpdatedAt = docData.updatedAt as { toDate?: () => Date } | string | undefined;
@@ -86,18 +91,18 @@ export function toPublicListingDTO(
     updatedAtStr = rawUpdatedAt;
   }
 
-  const shipping = (docData.shippingMethods || {}) as Record<string, unknown>;
-
   return {
-    id,
+    id: (docData.id as string) || id,
     sellerId: (docData.sellerId as string) || "",
     title: (docData.title as string) || "",
+    titleNormalized: (docData.titleNormalized as string) || "",
     categoryId: (docData.categoryId as string) || "",
-    subcategory: (docData.subcategory as string) || "",
-    condition: (docData.condition as string) || "good",
-    brandModel: (docData.brandModel as string) || undefined,
-    usageTime: (docData.usageTime as string) || undefined,
-    defects: (docData.defects as string) || undefined,
+    subcategory: (docData.subcategory as string) || null,
+    condition: (docData.condition as string) || "used",
+    brandModel: (docData.brandModel as string) || null,
+    usageTime: (docData.usageTime as string) || null,
+    defects: (docData.defects as string) || null,
+    noDefects: Boolean(docData.noDefects),
     description: (docData.description as string) || "",
     price: Number(docData.price) || 0,
     originalPrice: docData.originalPrice ? Number(docData.originalPrice) : undefined,
@@ -112,14 +117,12 @@ export function toPublicListingDTO(
     provinceName: (docData.provinceName as string) || undefined,
     wardCode: (docData.wardCode as string) || undefined,
     publicMeetingPoint: (docData.publicMeetingPoint as string) || "",
-    shippingMethods: {
-      pickup: Boolean(shipping.pickup ?? true),
-      sellerDelivery: Boolean(shipping.sellerDelivery),
-      carrierShipping: Boolean(shipping.carrierShipping),
-      campusDelivery: Boolean(shipping.campusDelivery),
-      shipFeeNote: (shipping.shipFeeNote as string) || undefined,
+    shippingMethods: (docData.shippingMethods as PublicListingDTO["shippingMethods"]) || {
+      pickup: true,
+      sellerDelivery: false,
+      carrierShipping: false,
     },
-    itemDimensions: (docData.itemDimensions as { weight?: string; dimensions?: string }) || null,
+    itemDimensions: (docData.itemDimensions as PublicListingDTO["itemDimensions"]) || null,
     images,
     thumbs,
     coverImage: cover,
@@ -133,7 +136,11 @@ export function toPublicListingDTO(
 }
 
 /**
- * Kiểm tra xem tin có được hiển thị công khai ở trang chi tiết không (active hoặc reserved và chưa quá hạn)
+ * Kiểm tra xem một tin đăng có được phép hiển thị công khai hay không
+ * Theo Ma trận hiển thị mục 2.2:
+ * - active & passDeadline >= today -> Hiển thị bình thường
+ * - reserved & passDeadline >= today -> Hiển thị công khai nhưng có badge "Đã có người giữ chỗ"
+ * - expired, sold, hidden -> Không hiển thị công khai (404 / Ẩn khỏi tìm kiếm)
  */
 export function isListingPubliclyVisible(
   listing: { status: string; passDeadline?: string },
@@ -173,7 +180,7 @@ export async function getSellerPublicProfile(uid: string): Promise<PublicSellerP
     displayName: (data.displayName as string) || "Sinh viên",
     photoURL: (data.photoURL as string) || "",
     verified: Boolean(data.verified),
-    rating: Number(data.rating) || 5.0,
+    rating: data.rating == null ? null : Number(data.rating),
     reviewsCount: Number(data.reviewsCount) || 0,
     completedDealsCount: Number(data.completedDealsCount) || 0,
     joinDate,
@@ -185,10 +192,6 @@ export async function getSellerPublicProfile(uid: string): Promise<PublicSellerP
 
 /**
  * Lấy chi tiết tin đăng công khai theo ID
- * Tuân thủ Ma trận 2.2:
- * - active & chưa quá hạn: trả về DTO
- * - reserved & chưa quá hạn: trả về DTO (UI hiện banner đã có người giữ chỗ)
- * - sold / hidden / expired / quá hạn: trả về null (404)
  */
 export async function getPublicListingById(
   id: string,
@@ -214,10 +217,10 @@ export async function getPublicListingById(
     listing: listingDTO,
     seller: seller || {
       id: listingDTO.sellerId,
-      displayName: listingDTO.schoolName || "Sinh viên",
+      displayName: "Sinh viên",
       photoURL: "",
-      verified: true,
-      rating: 5.0,
+      verified: false,
+      rating: null,
       reviewsCount: 0,
       completedDealsCount: 0,
       joinDate: "Thành viên",
@@ -251,7 +254,6 @@ export async function getSellerActiveListings(
     }
   });
 
-  // Sắp xếp tin mới nhất lên đầu
   validListings.sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
   return validListings;
 }
@@ -265,7 +267,7 @@ export interface PublicReviewDTO {
 }
 
 /**
- * Lấy các đánh giá gần nhất của người dùng
+ * Lấy các đánh giá gần nhất của người dùng (F15)
  */
 export async function getSellerRecentReviews(
   targetUserId: string,
@@ -278,6 +280,7 @@ export async function getSellerRecentReviews(
     const snap = await adminDb
       .collection("reviews")
       .where("targetUserId", "==", targetUserId)
+      .orderBy("createdAt", "desc")
       .limit(limitCount)
       .get();
 
@@ -298,7 +301,6 @@ export async function getSellerRecentReviews(
       });
     });
 
-    reviews.sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
     return reviews;
   } catch (err) {
     console.warn("Failed to fetch seller reviews:", err);
@@ -329,12 +331,10 @@ export interface SearchListingsResult {
 }
 
 /**
- * Tìm kiếm tin đăng toàn diện (WP-3A)
- * - Luôn where status == active
- * - Lọc isPastDeadline ngay lúc đọc
- * - Phân trang theo cursor
- * - Tìm kiếm không dấu đa từ
- * - Fallback tự động khi thiếu Firestore composite index
+ * Tìm kiếm tin đăng toàn diện (WP-3A, F16)
+ * - Quét lặp nhiều batch (BATCH_SIZE = 100, MAX_SCANNED = 500) để chống trang rỗng khi lọc in-memory
+ * - Phân trang theo cursor chính xác
+ * - Hỗ trợ fallback khi thiếu composite index
  */
 export async function searchListings(
   params: SearchListingsParams,
@@ -347,7 +347,6 @@ export async function searchListings(
   const limitCount = Math.min(50, Math.max(1, params.limit || 20));
   const sortMode = params.sort || "relevant";
 
-  // Chuẩn hóa từ khóa tìm kiếm
   const normalizedKeywords = params.q
     ? params.q
         .toLowerCase()
@@ -363,16 +362,23 @@ export async function searchListings(
   const BATCH_SIZE = 100;
   const MAX_SCANNED = 500;
 
-  async function executeQuery(useCompoundFilter: boolean) {
+  let cursorSnap: FirebaseFirestore.DocumentSnapshot | undefined = undefined;
+  if (params.cursor) {
+    const c = await adminDb.collection("listings").doc(params.cursor).get();
+    if (c.exists) {
+      cursorSnap = c;
+    }
+  }
+
+  async function runPage(useCompound: boolean, afterDoc?: FirebaseFirestore.DocumentSnapshot) {
     let query = adminDb.collection("listings").where("status", "==", "active");
 
-    if (useCompoundFilter) {
+    if (useCompound) {
       if (sortMode === "price_asc") {
         query = query.orderBy("price", "asc");
       } else if (sortMode === "price_desc") {
         query = query.orderBy("price", "desc");
       } else {
-        // Sort newest hoặc relevant: đẩy tối đa 1 equality filter
         if (params.school) {
           query = query.where("schoolCode", "==", params.school);
         } else if (params.category) {
@@ -383,121 +389,93 @@ export async function searchListings(
         query = query.orderBy("createdAt", "desc");
       }
     } else {
-      // Fallback: chỉ orderBy createdAt desc
       query = query.orderBy("createdAt", "desc");
     }
 
-    if (params.cursor) {
-      const cursorSnap = await adminDb.collection("listings").doc(params.cursor).get();
-      if (cursorSnap.exists) {
-        query = query.startAfter(cursorSnap);
-      }
+    if (afterDoc) {
+      query = query.startAfter(afterDoc);
     }
 
     return await query.limit(BATCH_SIZE).get();
   }
 
-  let snapshot;
-  try {
-    snapshot = await executeQuery(true);
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    const errorCode = (err as { code?: number })?.code;
-    // FAILED_PRECONDITION (code 9) do thiếu composite index
-    if (errorCode === 9 || errorMsg.includes("FAILED_PRECONDITION") || errorMsg.includes("requires an index")) {
-      console.warn("[SEARCH_INDEX_FALLBACK] Truy vấn thiếu Composite Index trên Firestore, kích hoạt fallback cơ bản:", errorMsg);
-      try {
-        snapshot = await executeQuery(false);
-      } catch (fallbackErr) {
-        console.error("[SEARCH_INDEX_FALLBACK_ERROR] Fallback cũng gặp lỗi:", fallbackErr);
-        return { items: [], nextCursor: undefined };
-      }
-    } else {
-      console.error("[SEARCH_LISTINGS_ERROR] Lỗi kết nối Firestore:", errorMsg);
-      return { items: [], nextCursor: undefined };
-    }
-  }
-
+  let useCompound = true;
   const matchedItems: PublicListingDTO[] = [];
-  let lastScannedDocId: string | undefined = undefined;
-  let scannedCount = 0;
+  let scanned = 0;
+  let lastDocSnap: FirebaseFirestore.DocumentSnapshot | undefined = undefined;
+  let exhausted = false;
+  let currentAfter = cursorSnap;
 
-  for (const doc of snapshot.docs) {
-    scannedCount++;
-    lastScannedDocId = doc.id;
-    if (scannedCount > MAX_SCANNED) break;
-
-    const data = doc.data() as Record<string, unknown>;
-    const passDeadline = (data.passDeadline as string) || "";
-
-    // 1. Lọc hết hạn
-    if (passDeadline < currentToday) {
-      continue;
-    }
-
-    // 2. Lọc danh mục
-    if (params.category && data.categoryId !== params.category) {
-      continue;
-    }
-
-    // 3. Lọc trường học
-    if (params.school && data.schoolCode !== params.school) {
-      continue;
-    }
-
-    // 4. Lọc tỉnh / thành
-    if (params.province && data.provinceCode !== params.province) {
-      continue;
-    }
-
-    // 5. Lọc gấp (urgentPass)
-    if (params.urgent && !data.urgentPass) {
-      continue;
-    }
-
-    // 6. Lọc có ship
-    if (params.shipping) {
-      const ship = (data.shippingMethods || {}) as Record<string, unknown>;
-      if (!ship.sellerDelivery && !ship.carrierShipping && !ship.campusDelivery) {
-        continue;
+  while (matchedItems.length < limitCount && scanned < MAX_SCANNED && !exhausted) {
+    let snap: FirebaseFirestore.QuerySnapshot | undefined;
+    try {
+      snap = await runPage(useCompound, currentAfter);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorCode = (err as { code?: number })?.code;
+      if (useCompound && (errorCode === 9 || errorMsg.includes("FAILED_PRECONDITION") || errorMsg.includes("requires an index"))) {
+        useCompound = false;
+        try {
+          snap = await runPage(false, currentAfter);
+        } catch {
+          break;
+        }
+      } else {
+        break;
       }
     }
 
-    // 7. Lọc khoảng giá
-    const price = Number(data.price) || 0;
-    if (params.minPrice !== undefined && price < params.minPrice) {
-      continue;
-    }
-    if (params.maxPrice !== undefined && price > params.maxPrice) {
-      continue;
-    }
-
-    // 8. Lọc từ khóa tìm kiếm không dấu
-    if (normalizedKeywords.length > 0) {
-      const titleNorm = (data.titleNormalized as string) ||
-        (data.title as string || "")
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .replace(/đ/g, "d")
-          .replace(/Đ/g, "d")
-          .replace(/[^\w\s]/g, " ");
-
-      const tokens = Array.isArray(data.searchTokens) ? (data.searchTokens as string[]) : [];
-
-      const matchesAllKeywords = normalizedKeywords.every((kw) => {
-        return titleNorm.includes(kw) || tokens.some((t) => t.includes(kw));
-      });
-
-      if (!matchesAllKeywords) {
-        continue;
-      }
-    }
-
-    matchedItems.push(toPublicListingDTO(data, doc.id));
-    if (matchedItems.length >= limitCount) {
+    if (!snap || snap.empty) {
+      exhausted = true;
       break;
     }
+
+    for (const doc of snap.docs) {
+      scanned++;
+      lastDocSnap = doc;
+      const data = doc.data() as Record<string, unknown>;
+      const passDeadline = (data.passDeadline as string) || "";
+
+      if (passDeadline < currentToday) continue;
+      if (params.category && data.categoryId !== params.category) continue;
+      if (params.school && data.schoolCode !== params.school) continue;
+      if (params.province && data.provinceCode !== params.province) continue;
+      if (params.urgent && !data.urgentPass) continue;
+      if (params.shipping) {
+        const ship = (data.shippingMethods || {}) as Record<string, unknown>;
+        if (!ship.sellerDelivery && !ship.carrierShipping && !ship.campusDelivery) continue;
+      }
+      const price = Number(data.price) || 0;
+      if (params.minPrice !== undefined && price < params.minPrice) continue;
+      if (params.maxPrice !== undefined && price > params.maxPrice) continue;
+
+      if (normalizedKeywords.length > 0) {
+        const titleNorm =
+          (data.titleNormalized as string) ||
+          (data.title as string || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/Đ/g, "d")
+            .replace(/[^\w\s]/g, " ");
+
+        const tokens = Array.isArray(data.searchTokens) ? (data.searchTokens as string[]) : [];
+        const matchesAllKeywords = normalizedKeywords.every((kw) => {
+          return titleNorm.includes(kw) || tokens.some((t) => t.includes(kw));
+        });
+        if (!matchesAllKeywords) continue;
+      }
+
+      matchedItems.push(toPublicListingDTO(data, doc.id));
+      if (matchedItems.length >= limitCount) break;
+    }
+
+    if (snap.docs.length < BATCH_SIZE) {
+      exhausted = true;
+      break;
+    }
+    currentAfter = lastDocSnap;
   }
 
   // Sắp xếp relevant nếu có thông tin trường/vùng người xem
@@ -521,8 +499,7 @@ export async function searchListings(
     });
   }
 
-  const nextCursor =
-    snapshot.docs.length >= limitCount && lastScannedDocId ? lastScannedDocId : undefined;
+  const nextCursor = !exhausted && lastDocSnap ? lastDocSnap.id : undefined;
 
   return {
     items: matchedItems,
