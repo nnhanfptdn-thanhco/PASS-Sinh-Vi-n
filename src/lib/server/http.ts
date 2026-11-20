@@ -34,10 +34,25 @@ export async function readJson<T = unknown>(
     );
   }
 
-  const text = await req.text();
-  if (text.length > maxBytes) {
-    throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Dữ liệu gửi lên vượt quá giới hạn");
+  const reader = req.body?.getReader();
+  if (!reader) {
+    throw new ApiError(400, "EMPTY_BODY", "Thiếu nội dung yêu cầu");
   }
+
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > maxBytes) {
+      await reader.cancel();
+      throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Dữ liệu gửi lên vượt quá giới hạn");
+    }
+    chunks.push(value);
+  }
+
+  const text = Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf8");
 
   try {
     return JSON.parse(text) as T;

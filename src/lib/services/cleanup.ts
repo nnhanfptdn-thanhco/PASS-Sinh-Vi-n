@@ -9,6 +9,115 @@ export interface CleanupResult {
 }
 
 /**
+ * Helper xử lý hết hạn giữ chỗ theo transaction nguyên tử (F05)
+ */
+async function expireReservationTx(
+  resId: string,
+  kind: "pending" | "confirmed",
+  now: Date
+): Promise<boolean> {
+  const resRef = adminDb.collection("reservations").doc(resId);
+
+  return await adminDb.runTransaction(async (tx) => {
+    // ===== READ PHASE =====
+    const resSnap = await tx.get(resRef);
+    if (!resSnap.exists) return false;
+    const res = resSnap.data()!;
+    if (res.status !== kind) return false; // Idempotent: đã bị xử lý ở nơi khác
+
+    const listingRef = adminDb.collection("listings").doc(res.listingId);
+    const privateRef = adminDb.collection("listingsPrivate").doc(res.listingId);
+    const listingSnap = await tx.get(listingRef);
+
+    const waitSnap = await tx.get(
+      adminDb
+        .collection("reservations")
+        .where("listingId", "==", res.listingId)
+        .where("status", "==", "waitlisted")
+        .orderBy("createdAt", "asc")
+        .limit(1)
+    );
+
+    // ===== WRITE PHASE =====
+    tx.update(resRef, {
+      status: "expired",
+      cancelReason:
+        kind === "pending"
+          ? "Hết hạn 24 giờ chờ người bán phản hồi"
+          : "Hết hạn giữ 72 giờ mà chưa hoàn tất giao dịch",
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    const lst = listingSnap.exists ? listingSnap.data()! : {};
+
+    if (kind === "confirmed") {
+      // GUARD: Chỉ mở lại active/expired nếu tin đang thực sự là "reserved", không ghi đè "sold" hay "hidden_by_admin"
+      if (listingSnap.exists && lst.status === "reserved") {
+        tx.update(listingRef, {
+          status: isPastDeadline((lst.passDeadline as string) || "", now) ? "expired" : "active",
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+      tx.set(privateRef, { confirmedBuyerId: FieldValue.delete() }, { merge: true });
+    }
+
+    const notif = (userId: string, type: string, title: string, body: string, targetId: string) => {
+      const nRef = adminDb.collection("notifications").doc();
+      tx.set(nRef, {
+        userId,
+        type,
+        title,
+        body,
+        targetId,
+        read: false,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    };
+
+    notif(
+      res.buyerId,
+      "reservation_expired",
+      kind === "pending" ? "Yêu cầu giữ chỗ đã hết hạn" : "Giao dịch giữ chỗ 72h đã hết hạn",
+      `Yêu cầu/giữ chỗ món đồ "${res.listingTitle}" đã hết hạn.`,
+      resId
+    );
+
+    if (kind === "confirmed") {
+      notif(
+        res.sellerId,
+        "reservation_expired",
+        "Hết hạn giữ chỗ 72h",
+        `Món đồ "${res.listingTitle}" đã hết hạn giữ 72 giờ và được mở lại.`,
+        resId
+      );
+    }
+
+    // Đẩy người ở waitlist lên pending nếu tin vẫn khả dụng (active hoặc vừa mở lại từ reserved)
+    const isListingAvailable =
+      listingSnap.exists &&
+      (lst.status === "active" || (kind === "confirmed" && lst.status === "reserved"));
+
+    if (!waitSnap.empty && isListingAvailable) {
+      const next = waitSnap.docs[0];
+      tx.update(next.ref, {
+        status: "pending",
+        expiresAt: new Date(now.getTime() + 24 * 3600 * 1000).toISOString(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      notif(
+        next.data().buyerId,
+        "waitlist_promoted",
+        "Bạn đã được chuyển lên hàng đầu! 🎉",
+        `Yêu cầu của bạn cho món đồ "${res.listingTitle}" đã được đưa lên cho người bán xác nhận trong 24 giờ tới.`,
+        next.id
+      );
+    }
+
+    return true;
+  });
+}
+
+/**
  * Thực hiện dọn dẹp hệ thống theo lịch định kỳ (Idempotent & Chunked batches):
  * 1. Tự động xóa vĩnh viễn ảnh thẻ sinh viên quá 30 ngày sau khi duyệt hoặc từ chối (Tuân thủ PDP 2025).
  * 2. Tự động chuyển trạng thái tin hết hạn về 'expired' (tính theo múi giờ Asia/Ho_Chi_Minh).
@@ -31,15 +140,17 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
       .collection("verifications")
       .where("status", "in", ["approved", "rejected", "expired"])
       .where("decidedAt", "<=", thirtyDaysAgo)
+      .limit(200)
       .get();
 
     for (const doc of oldVerifsSnap.docs) {
       const data = doc.data();
       const storagePath = data.cardStoragePath || data.cardImagePath;
-      if (storagePath && !data.cardDeleted) {
+      if (storagePath && typeof storagePath === "string" && !data.cardDeleted) {
         try {
-          const fileRef = adminStorage.bucket().file(storagePath);
-          await fileRef.delete({ ignoreNotFound: true });
+          if (storagePath.startsWith("private/cards/")) {
+            await adminStorage.bucket().file(storagePath).delete({ ignoreNotFound: true });
+          }
           await doc.ref.update({
             cardDeleted: true,
             cardStoragePath: null,
@@ -63,10 +174,11 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
       .collection("listings")
       .where("status", "==", "active")
       .where("passDeadline", "<", currentToday)
+      .limit(1000)
       .get();
 
-    // Chia lô tối đa 400 thao tác cho mỗi batch (giới hạn Firestore là 500)
-    const BATCH_SIZE = 400;
+    // Mỗi doc có 2 ghi (update tin + insert notification) => BATCH_SIZE = 200 đảm bảo 400 <= 500 thao tác
+    const BATCH_SIZE = 200;
     const docs = overdueListingsSnap.docs;
 
     for (let i = 0; i < docs.length; i += BATCH_SIZE) {
@@ -80,7 +192,6 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
           updatedAt: FieldValue.serverTimestamp(),
         });
 
-        // Tạo thông báo cho chủ tin (idempotent)
         const sellerId = doc.data().sellerId;
         if (sellerId) {
           const notifRef = adminDb.collection("notifications").doc();
@@ -109,60 +220,15 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
       .collection("reservations")
       .where("status", "==", "pending")
       .where("expiresAt", "<=", nowIso)
+      .limit(200)
       .get();
 
     for (const doc of expiredPendingSnap.docs) {
-      const resData = doc.data();
-      const listingId = resData.listingId;
-
-      await doc.ref.update({
-        status: "expired",
-        cancelReason: "Hết hạn 24 giờ chờ người bán phản hồi",
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-      expiredPendingReservationsCount++;
-
-      // Thông báo cho người mua
-      await adminDb.collection("notifications").add({
-        userId: resData.buyerId,
-        type: "reservation_expired",
-        title: "Yêu cầu giữ chỗ đã hết hạn",
-        body: `Yêu cầu giữ chỗ món đồ "${resData.listingTitle}" của bạn đã quá hạn 24 giờ mà người bán chưa phản hồi.`,
-        targetId: doc.id,
-        read: false,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-
-      // Kiểm tra và đẩy yêu cầu sớm nhất trong waitlist lên pending với HẠN MỚI 24H
-      const waitlistedSnap = await adminDb
-        .collection("reservations")
-        .where("listingId", "==", listingId)
-        .where("status", "==", "waitlisted")
-        .orderBy("createdAt", "asc")
-        .limit(1)
-        .get();
-
-      if (!waitlistedSnap.empty) {
-        const nextDoc = waitlistedSnap.docs[0];
-        const nextBuyerId = nextDoc.data().buyerId;
-        const newExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-
-        await nextDoc.ref.update({
-          status: "pending",
-          expiresAt: newExpiresAt,
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-
-        // Báo cho người mua kế tiếp
-        await adminDb.collection("notifications").add({
-          userId: nextBuyerId,
-          type: "waitlist_promoted",
-          title: "Bạn đã được chuyển lên hàng đầu! 🎉",
-          body: `Yêu cầu trước cho món đồ "${resData.listingTitle}" đã hết hạn. Yêu cầu của bạn đã được đưa lên cho người bán xác nhận trong 24 giờ tới.`,
-          targetId: nextDoc.id,
-          read: false,
-          createdAt: FieldValue.serverTimestamp(),
-        });
+      try {
+        const success = await expireReservationTx(doc.id, "pending", now);
+        if (success) expiredPendingReservationsCount++;
+      } catch (err) {
+        console.warn(`Lỗi khi xử lý giữ chỗ pending ${doc.id}:`, err);
       }
     }
   } catch (err) {
@@ -175,77 +241,15 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
       .collection("reservations")
       .where("status", "==", "confirmed")
       .where("holdExpiresAt", "<=", nowIso)
+      .limit(200)
       .get();
 
     for (const doc of expiredConfirmedSnap.docs) {
-      const resData = doc.data();
-      const listingId = resData.listingId;
-
-      await doc.ref.update({
-        status: "expired",
-        cancelReason: "Hết hạn giữ 72 giờ mà chưa hoàn tất giao dịch",
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-      expiredConfirmedReservationsCount++;
-
-      // Kiểm tra tin đăng để mở lại active hoặc chuyển sang expired nếu quá hạn
-      const listingRef = adminDb.collection("listings").doc(listingId);
-      const listingSnap = await listingRef.get();
-      if (listingSnap.exists) {
-        const listingData = listingSnap.data() || {};
-        const isOverdue = isPastDeadline((listingData.passDeadline as string) || "");
-
-        await listingRef.update({
-          status: isOverdue ? "expired" : "active",
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-      }
-
-      // Khóa lại địa chỉ trong listingsPrivate
-      const privateRef = adminDb.collection("listingsPrivate").doc(listingId);
-      await privateRef.set(
-        { confirmedBuyerId: FieldValue.delete() },
-        { merge: true }
-      );
-
-      // Thông báo cho cả hai bên
-      await adminDb.collection("notifications").add({
-        userId: resData.buyerId,
-        type: "reservation_expired",
-        title: "Giao dịch giữ chỗ 72h đã hết hạn",
-        body: `Thời gian giữ chỗ 72 giờ cho món đồ "${resData.listingTitle}" đã kết thúc.`,
-        targetId: doc.id,
-        read: false,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-
-      await adminDb.collection("notifications").add({
-        userId: resData.sellerId,
-        type: "reservation_expired",
-        title: "Hết hạn giữ chỗ 72h",
-        body: `Món đồ "${resData.listingTitle}" đã hết hạn giữ 72 giờ và được mở lại để các bạn sinh viên khác tiếp tục xem.`,
-        targetId: doc.id,
-        read: false,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-
-      // Đẩy waitlist lên pending
-      const waitlistedSnap = await adminDb
-        .collection("reservations")
-        .where("listingId", "==", listingId)
-        .where("status", "==", "waitlisted")
-        .orderBy("createdAt", "asc")
-        .limit(1)
-        .get();
-
-      if (!waitlistedSnap.empty) {
-        const nextDoc = waitlistedSnap.docs[0];
-        const newExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-        await nextDoc.ref.update({
-          status: "pending",
-          expiresAt: newExpiresAt,
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+      try {
+        const success = await expireReservationTx(doc.id, "confirmed", now);
+        if (success) expiredConfirmedReservationsCount++;
+      } catch (err) {
+        console.warn(`Lỗi khi xử lý giữ chỗ confirmed ${doc.id}:`, err);
       }
     }
   } catch (err) {

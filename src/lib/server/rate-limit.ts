@@ -2,7 +2,16 @@ import { adminDb } from "@/lib/firebase/admin";
 import { ApiError } from "./http";
 
 export interface RateLimitOptions {
-  scope: "contact_view" | "create_listing" | "submit_verification" | "create_conversation" | "auth_bootstrap";
+  scope:
+    | "contact_view"
+    | "create_listing"
+    | "submit_verification"
+    | "create_conversation"
+    | "auth_bootstrap"
+    | "report"
+    | "appeal"
+    | "favorite_toggle"
+    | "review";
   key: string;
   limit: number;
   windowSec: number;
