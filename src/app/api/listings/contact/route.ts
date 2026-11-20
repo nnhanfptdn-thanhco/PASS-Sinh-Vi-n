@@ -26,18 +26,6 @@ export const POST = withApi(async (req: NextRequest) => {
   const existingLogSnap = await logRef.get();
   const alreadyViewed = existingLogSnap.exists;
 
-  // Nếu chưa từng xem tin này -> Tiêu thụ quota 10 lượt/giờ
-  if (!alreadyViewed && !isAdmin) {
-    await consumeRateLimit({
-      scope: "contact_view",
-      key: viewerId,
-      limit: 10,
-      windowSec: 3600,
-      customMessage:
-        "Bạn đã xem liên hệ 10 tin trong 1 giờ qua. Vui lòng quay lại sau nhằm bảo vệ quyền riêng tư của sinh viên.",
-    });
-  }
-
   // 4. Kiểm tra tin đăng và quyền xem
   const listingSnap = await adminDb.collection("listings").doc(listingId).get();
   if (!listingSnap.exists) {
@@ -84,6 +72,18 @@ export const POST = withApi(async (req: NextRequest) => {
         "Món đồ này hiện đã có người giữ chỗ và đang khóa thông tin liên hệ."
       );
     }
+  }
+
+  // Tiêu thụ quota 10 lượt/giờ SAU KHI đã kiểm tra tin khả dụng (F11)
+  if (!alreadyViewed && !isAdmin) {
+    await consumeRateLimit({
+      scope: "contact_view",
+      key: viewerId,
+      limit: 10,
+      windowSec: 3600,
+      customMessage:
+        "Bạn đã xem liên hệ 10 tin trong 1 giờ qua. Vui lòng quay lại sau nhằm bảo vệ quyền riêng tư của sinh viên.",
+    });
   }
 
   const isConfirmedBuyer = viewerId === confirmedBuyerId || isAdmin;

@@ -62,36 +62,35 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
-  // 6. Kiểm tra trạng thái hiện tại của hồ sơ
+  // 6. Tính mã băm HMAC-SHA256 & tham chiếu
   const verifRef = adminDb.collection("verifications").doc(userId);
-  const currentVerif = await verifRef.get();
-
-  if (currentVerif.exists) {
-    const status = currentVerif.data()?.status;
-    if (status === "approved") {
-      throw new ApiError(
-        400,
-        "ALREADY_VERIFIED",
-        "Tài khoản của bạn đã được xác minh thẻ sinh viên thành công trước đó."
-      );
-    }
-    if (status === "pending") {
-      throw new ApiError(
-        400,
-        "VERIFICATION_PENDING",
-        "Hồ sơ của bạn đang được xét duyệt. Vui lòng chờ phản hồi từ Ban Quản Trị."
-      );
-    }
-  }
-
-  // 7. Tính mã băm HMAC-SHA256
   const studentIdHash = computeStudentIdHash(data.schoolCode, data.studentId);
   const hashLockRef = adminDb.collection("studentIdHashes").doc(studentIdHash);
 
-  // 8. Transaction: Khóa chống trùng thẻ sinh viên bằng document key duy nhất
+  // 7. Transaction: Kiểm tra trạng thái và trùng thẻ sinh viên, lưu hồ sơ pending
   await adminDb.runTransaction(async (transaction) => {
-    const hashDoc = await transaction.get(hashLockRef);
+    // Đọc trạng thái hiện tại TRONG transaction để chống nộp song song
+    const currentVerif = await transaction.get(verifRef);
+    if (currentVerif.exists) {
+      const status = currentVerif.data()?.status;
+      if (status === "approved") {
+        throw new ApiError(
+          400,
+          "ALREADY_VERIFIED",
+          "Tài khoản của bạn đã được xác minh thẻ sinh viên thành công trước đó."
+        );
+      }
+      if (status === "pending") {
+        throw new ApiError(
+          400,
+          "VERIFICATION_PENDING",
+          "Hồ sơ của bạn đang được xét duyệt. Vui lòng chờ phản hồi từ Ban Quản Trị."
+        );
+      }
+    }
 
+    // Chỉ đọc hashDoc để kiểm tra xem MSSV đã được duyệt cho ai khác chưa (F09)
+    const hashDoc = await transaction.get(hashLockRef);
     if (hashDoc.exists) {
       const existingOwner = hashDoc.data()?.userId;
       if (existingOwner && existingOwner !== userId) {
@@ -108,15 +107,7 @@ export const POST = withApi(async (req: NextRequest) => {
       emailVerified: auth.token.email_verified,
     });
 
-    // Ghi nhận khóa băm duy nhất
-    transaction.set(hashLockRef, {
-      studentIdHash,
-      userId,
-      schoolCode: data.schoolCode,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-
-    // Lưu hồ sơ xác minh (Private)
+    // Lưu hồ sơ xác minh (Private) - KHÔNG set hashLockRef ở đây (chuyển sang khi Admin duyệt)
     transaction.set(verifRef, {
       userId,
       userEmail,

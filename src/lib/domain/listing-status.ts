@@ -79,7 +79,10 @@ export function validateManageListingAction(
           error: "Tin đăng hiện đã đang được hiển thị công khai.",
         };
       }
-      if (currentStatus !== "hidden_by_seller" && !isAdmin) {
+      const showable =
+        currentStatus === "hidden_by_seller" ||
+        (currentStatus === "hidden_by_admin" && isAdmin);
+      if (!showable) {
         return {
           valid: false,
           statusCode: 409,

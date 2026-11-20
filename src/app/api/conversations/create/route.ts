@@ -27,6 +27,13 @@ export const POST = withApi(async (req: NextRequest) => {
     throw new ApiError(400, "CANNOT_CHAT_WITH_SELF", "Bạn không thể tự nhắn tin cho chính mình.");
   }
 
+  // Kiểm tra chính người gọi không bị khóa hoặc xóa
+  const currentUserSnap = await adminDb.collection("users").doc(uid).get();
+  const currentUserData = currentUserSnap.data() || {};
+  if (currentUserData.deleted || currentUserData.status === "banned") {
+    throw new ApiError(403, "USER_INACTIVE", "Tài khoản của bạn đã bị khóa hoặc xóa.");
+  }
+
   // 2. Kiểm tra người dùng đối tác tồn tại và không bị khóa
   const otherUserSnap = await adminDb.collection("users").doc(otherUserId).get();
   if (!otherUserSnap.exists) {
@@ -38,7 +45,7 @@ export const POST = withApi(async (req: NextRequest) => {
     throw new ApiError(403, "USER_INACTIVE", "Tài khoản đối phương hiện không thể nhận tin nhắn.");
   }
 
-  // 3. Nếu có listingId: Kiểm tra tin đăng tồn tại, active và sellerId === otherUserId
+  // 3. Nếu có listingId: Kiểm tra tin đăng tồn tại và logic khởi tạo (F21)
   let listingTitle = "";
   let listingPrice = 0;
   let listingCoverImage = "";
@@ -52,15 +59,49 @@ export const POST = withApi(async (req: NextRequest) => {
     if (listingData.status !== "active" && listingData.status !== "reserved") {
       throw new ApiError(400, "LISTING_NOT_ACTIVE", "Món đồ này đã đóng hoặc đã bán.");
     }
-    if (listingData.sellerId !== otherUserId && listingData.sellerId !== uid) {
-      throw new ApiError(403, "NOT_SELLER", "Người dùng này không phải người bán món đồ.");
+
+    const isBuyerInitiating = listingData.sellerId === otherUserId;
+    let isSellerReplyToBuyer = false;
+
+    if (!isBuyerInitiating && listingData.sellerId === uid) {
+      // Người bán chỉ được mở chat với buyer đã có yêu cầu giữ chỗ cho tin này
+      const resSnap = await adminDb
+        .collection("reservations")
+        .where("listingId", "==", listingId)
+        .where("buyerId", "==", otherUserId)
+        .limit(1)
+        .get();
+      isSellerReplyToBuyer = !resSnap.empty;
     }
+
+    if (!isBuyerInitiating && !isSellerReplyToBuyer) {
+      throw new ApiError(403, "NOT_SELLER", "Bạn không thể mở hội thoại về món đồ này với người dùng đó.");
+    }
+
     listingTitle = listingData.title || "";
     listingPrice = listingData.price || 0;
     listingCoverImage = listingData.coverImage || "";
   }
 
-  // 4. Rate limit: 20 hội thoại mới/ngày/uid
+  // 4. Id hội thoại xác định: sorted([uidA, uidB]).join('_') + (listingId ? '_' + listingId : '')
+  const sortedUids = [uid, otherUserId].sort();
+  const convId = sortedUids.join("_") + (listingId ? `_${listingId}` : "");
+  const convRef = adminDb.collection("conversations").doc(convId);
+
+  // Kiểm tra hội thoại đã tồn tại trước khi tiêu quota rate limit (F21)
+  const existingConvSnap = await convRef.get();
+  if (existingConvSnap.exists) {
+    return NextResponse.json(
+      {
+        success: true,
+        conversationId: convId,
+        conversation: { id: convId, ...existingConvSnap.data(), isNew: false },
+      },
+      { status: 200 }
+    );
+  }
+
+  // 5. Rate limit: 20 hội thoại mới/ngày/uid (chỉ tiêu quota khi tạo mới thật sự)
   await consumeRateLimit({
     scope: "create_conversation",
     key: uid,
@@ -69,12 +110,7 @@ export const POST = withApi(async (req: NextRequest) => {
     customMessage: "Bạn đã mở 20 cuộc trò chuyện mới hôm nay. Vui lòng quay lại vào ngày mai.",
   });
 
-  // 5. Id hội thoại xác định: sorted([uidA, uidB]).join('_') + (listingId ? '_' + listingId : '')
-  const sortedUids = [uid, otherUserId].sort();
-  const convId = sortedUids.join("_") + (listingId ? `_${listingId}` : "");
-  const convRef = adminDb.collection("conversations").doc(convId);
-
-  // 6. Transaction: Tạo nếu chưa có, hoặc trả hội thoại cũ
+  // 6. Transaction: Tạo hội thoại mới nguyên tử
   const convData = await adminDb.runTransaction(async (transaction) => {
     const snap = await transaction.get(convRef);
     if (snap.exists) {

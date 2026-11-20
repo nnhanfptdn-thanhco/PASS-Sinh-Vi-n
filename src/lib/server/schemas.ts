@@ -12,10 +12,12 @@ export const createListingSchema = z
   .object({
     draftId: z
       .string()
-      .min(8, "draftId không hợp lệ")
-      .max(64, "draftId quá dài")
+      .regex(/^[A-Za-z0-9_-]{8,64}$/, "draftId không hợp lệ")
       .optional(),
-    clientRequestId: z.string().max(100).optional(),
+    clientRequestId: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{8,100}$/, "clientRequestId không hợp lệ")
+      .optional(),
     title: z
       .string()
       .trim()

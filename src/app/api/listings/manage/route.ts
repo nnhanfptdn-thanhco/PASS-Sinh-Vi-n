@@ -103,8 +103,11 @@ export const POST = withApi(async (req: NextRequest) => {
           .where("status", "in", ["pending", "waitlisted"])
       );
 
+      const hideStatus =
+        isAdmin && sellerId !== callerUid ? "hidden_by_admin" : "hidden_by_seller";
+
       transaction.update(listingRef, {
-        status: "hidden_by_seller",
+        status: hideStatus,
         updatedAt: FieldValue.serverTimestamp(),
       });
 
@@ -132,7 +135,7 @@ export const POST = withApi(async (req: NextRequest) => {
       });
 
       return {
-        status: "hidden_by_seller",
+        status: hideStatus,
         message: "Đã tạm ẩn tin đăng thành công.",
       };
     }
@@ -182,17 +185,6 @@ export const POST = withApi(async (req: NextRequest) => {
         });
       });
 
-      // Tăng số lượng completedDealsCount của người bán (nguyên tử)
-      const userRef = adminDb.collection("users").doc(sellerId);
-      transaction.set(
-        userRef,
-        {
-          completedDealsCount: FieldValue.increment(1),
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-
       return {
         status: "sold",
         message: "Đã đánh dấu bán thành công! Tin đăng sẽ ẩn khỏi mọi nơi công khai.",
@@ -201,9 +193,9 @@ export const POST = withApi(async (req: NextRequest) => {
 
     if (action === "renew") {
       const today = todayVN();
-      const isExpired = currentStatus === "expired" || isPastDeadline(passDeadline);
+      const wasExpiredStatus = currentStatus === "expired"; // chỉ trạng thái expired mới CHƯA chiếm slot
 
-      if (isExpired) {
+      if (wasExpiredStatus) {
         // Kiểm tra số slot nếu chuyển từ expired -> active
         const activeSnap = await transaction.get(
           adminDb
@@ -221,12 +213,13 @@ export const POST = withApi(async (req: NextRequest) => {
         }
       }
 
-      const calculatedDeadline = addDaysVN(today, 7);
       const maxDeadline = addDaysVN(today, 30);
-      const newDeadline =
-        calculatedDeadline > maxDeadline ? maxDeadline : calculatedDeadline;
+      const plus7 = addDaysVN(today, 7);
+      const current = passDeadline && !isPastDeadline(passDeadline) ? passDeadline : today;
+      let newDeadline = current > plus7 ? current : plus7; // không bao giờ rút ngắn
+      if (newDeadline > maxDeadline) newDeadline = maxDeadline;
 
-      const newStatus = isExpired ? "active" : currentStatus;
+      const newStatus = wasExpiredStatus ? "active" : currentStatus; // reserved giữ reserved, active giữ active
 
       transaction.update(listingRef, {
         passDeadline: newDeadline,
