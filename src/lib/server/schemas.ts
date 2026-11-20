@@ -62,10 +62,10 @@ export const createListingSchema = z
       .nullable()
       .optional(),
     images: z
-      .array(z.string())
+      .array(z.string().max(1024))
       .min(1, "Vui lòng tải tối thiểu 1 ảnh thực tế")
       .max(10, "Tối đa 10 ảnh"),
-    thumbs: z.array(z.string()).max(10).optional(),
+    thumbs: z.array(z.string().max(1024)).max(10).optional(),
   })
   .strict();
 
@@ -77,21 +77,25 @@ export const contactRequestSchema = z
 
 export const submitVerificationSchema = z
   .object({
-    realName: z.string().min(2, "Họ và tên phải từ 2 ký tự trở lên"),
-    displayName: z.string().min(2, "Tên hiển thị phải từ 2 ký tự trở lên"),
-    schoolCode: z.string().min(1, "Vui lòng chọn trường học"),
-    campusId: z.string().optional(),
-    faculty: z.string().optional(),
-    studentClass: z.string().optional(),
-    studentId: z.string().min(4, "Mã số sinh viên không hợp lệ"),
+    realName: z.string().trim().min(2, "Họ và tên phải từ 2 ký tự trở lên").max(100, "Họ và tên tối đa 100 ký tự"),
+    displayName: z.string().trim().min(2, "Tên hiển thị phải từ 2 ký tự trở lên").max(60, "Tên hiển thị tối đa 60 ký tự"),
+    schoolCode: z.string().min(1, "Vui lòng chọn trường học").max(32),
+    campusId: z.string().max(64).optional(),
+    faculty: z.string().max(100).optional(),
+    studentClass: z.string().max(50).optional(),
+    studentId: z.string().trim().min(4, "Mã số sinh viên không hợp lệ").max(32, "Mã số sinh viên quá dài"),
     zaloPhone: z
       .string()
       .regex(/^(0|\+84)[35789][0-9]{8}$/, "Số điện thoại Zalo không hợp lệ"),
-    altPhone: z.string().optional(),
-    provinceCode: z.string().optional(),
-    wardCode: z.string().optional(),
-    dormOrAddress: z.string().optional(),
+    altPhone: z
+      .string()
+      .regex(/^(0|\+84)[35789][0-9]{8}$/, "Số điện thoại phụ không hợp lệ")
+      .optional()
+      .or(z.literal("")),
+    provinceCode: z.string().max(32).optional(),
+    wardCode: z.string().max(32).optional(),
+    dormOrAddress: z.string().max(200).optional(),
     isGraduating: z.boolean().optional(),
-    cardStoragePath: z.string().min(1, "Thiếu đường dẫn tệp ảnh thẻ"),
+    cardStoragePath: z.string().min(1, "Thiếu đường dẫn tệp ảnh thẻ").max(200, "Đường dẫn ảnh thẻ quá dài"),
   })
   .strict();

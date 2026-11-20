@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { RequireVerified } from "@/components/auth/RequireVerified";
 import { storage, authFetch } from "@/lib/firebase/client";
-import { ref, deleteObject } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { compressListingImage } from "@/lib/image/compress";
 import { todayVN, addDaysVN } from "@/lib/utils/date";
 import categoriesData from "../../../../data/categories.json";
@@ -193,7 +193,7 @@ export default function NewListingPage() {
     const filesToUpload = Array.from(files).slice(0, availableSlots);
 
     for (const file of filesToUpload) {
-      const localId = Math.random().toString(36).substring(2, 9);
+      const localId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
       const previewUrl = URL.createObjectURL(file);
 
       const newItem: UploadedImageItem = {
@@ -205,46 +205,44 @@ export default function NewListingPage() {
 
       setImageItems((prev) => [...prev, newItem]);
 
-      // Nén và chuyển đổi sang Base64 WebP (100% miễn phí, không cần thẻ ngân hàng / Cloud Storage)
       try {
-        setImageItems((prev) =>
-          prev.map((item) => (item.id === localId ? { ...item, progress: 40 } : item))
-        );
+        setImageItems((prev) => prev.map((it) => (it.id === localId ? { ...it, progress: 30 } : it)));
         const compressed = await compressListingImage(file);
         const thumbBlob = await createThumbBlob(file);
 
+        const ext = compressed.extension || (compressed.mimeType === "image/jpeg" ? "jpg" : "webp");
+        const contentType = compressed.mimeType || (ext === "jpg" ? "image/jpeg" : "image/webp");
+
+        const base = `public/listings/${user.uid}/${draftId}`;
+        const mainPath = `${base}/${localId}.${ext}`;
+        const thumbPath = `${base}/${localId}_t.webp`;
+
+        const [mainSnap, thumbSnap] = await Promise.all([
+          uploadBytes(ref(storage, mainPath), compressed.blob, { contentType }),
+          uploadBytes(ref(storage, thumbPath), thumbBlob, { contentType: "image/webp" }),
+        ]);
+        const [mainUrl, thumbUrl] = await Promise.all([
+          getDownloadURL(mainSnap.ref),
+          getDownloadURL(thumbSnap.ref),
+        ]);
+
         setImageItems((prev) =>
-          prev.map((item) => (item.id === localId ? { ...item, progress: 80 } : item))
-        );
-
-        const blobToDataUrl = (blob: Blob): Promise<string> =>
-          new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-
-        const mainUrl = await blobToDataUrl(compressed.blob);
-        const thumbUrl = await blobToDataUrl(thumbBlob);
-
-        setImageItems((prev) =>
-          prev.map((item) =>
-            item.id === localId
+          prev.map((it) =>
+            it.id === localId
               ? {
-                  ...item,
+                  ...it,
                   status: "done",
                   progress: 100,
                   storageUrl: mainUrl,
                   thumbUrl,
-                  storagePath: `data/${localId}`,
+                  storagePath: mainPath,
                 }
-              : item
+              : it
           )
         );
       } catch (err: unknown) {
-        console.error("Lỗi nén ảnh:", err);
-        const msg = err instanceof Error ? err.message : "Không thể nén ảnh";
+        console.error("Lỗi tải ảnh:", err);
+        const msg = err instanceof Error ? err.message : "Không thể nén hoặc tải ảnh";
         setImageItems((prev) =>
           prev.map((item) =>
             item.id === localId ? { ...item, status: "error", error: msg } : item
@@ -259,6 +257,8 @@ export default function NewListingPage() {
     if (item) {
       if (item.storagePath && !item.storagePath.startsWith("data/")) {
         deleteObject(ref(storage, item.storagePath)).catch(() => {});
+        const thumbPath = item.storagePath.replace(/\.(webp|jpg)$/, "_t.webp");
+        deleteObject(ref(storage, thumbPath)).catch(() => {});
       }
       URL.revokeObjectURL(item.previewUrl);
     }

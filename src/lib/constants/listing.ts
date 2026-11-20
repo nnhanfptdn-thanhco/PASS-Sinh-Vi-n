@@ -14,7 +14,7 @@ export type ListingCondition = typeof LISTING_CONDITIONS[number]["value"];
 
 // Giới hạn số lượng
 export const MAX_ACTIVE_LISTINGS_PER_SELLER = 10; // Giới hạn 10 tin active + reserved / seller
-export const MIN_LISTING_IMAGES = 3; // Bắt buộc tối thiểu 3 ảnh
+export const MIN_LISTING_IMAGES = 1; // Bắt buộc tối thiểu 1 ảnh (đồng bộ với schema và UI)
 export const MAX_LISTING_IMAGES = 10; // Tối đa 10 ảnh
 
 // Giới hạn giữ chỗ

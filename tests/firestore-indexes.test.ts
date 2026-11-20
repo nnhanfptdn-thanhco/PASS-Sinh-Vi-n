@@ -144,7 +144,13 @@ describe("Kiểm tra đầy đủ Firestore Composite Indexes (WP-6.3)", () => {
     ).toBe(true);
   });
 
-  it("verifications: có index (status ASC, decidedAt ASC)", () => {
+  it("verifications: có index (status ASC, createdAt ASC) và (status ASC, decidedAt ASC)", () => {
+    expect(
+      hasIndex("verifications", [
+        { fieldPath: "status", order: "ASCENDING" },
+        { fieldPath: "createdAt", order: "ASCENDING" },
+      ])
+    ).toBe(true);
     expect(
       hasIndex("verifications", [
         { fieldPath: "status", order: "ASCENDING" },
@@ -153,12 +159,21 @@ describe("Kiểm tra đầy đủ Firestore Composite Indexes (WP-6.3)", () => {
     ).toBe(true);
   });
 
-  it("contactViewLogs: có index (buyerId, timestamp)", () => {
+  it("reviews: có index (targetUserId ASC, createdAt DESC)", () => {
+    expect(
+      hasIndex("reviews", [
+        { fieldPath: "targetUserId", order: "ASCENDING" },
+        { fieldPath: "createdAt", order: "DESCENDING" },
+      ])
+    ).toBe(true);
+  });
+
+  it("contactViewLogs: không còn index dư thừa (buyerId, timestamp)", () => {
     expect(
       hasIndex("contactViewLogs", [
         { fieldPath: "buyerId", order: "ASCENDING" },
         { fieldPath: "timestamp", order: "ASCENDING" },
       ])
-    ).toBe(true);
+    ).toBe(false);
   });
 });

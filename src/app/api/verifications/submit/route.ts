@@ -29,34 +29,19 @@ export const POST = withApi(async (req: NextRequest) => {
   const body = await readJson(req);
   const data = submitVerificationSchema.parse(body);
 
-  // 4. Kiểm tra đường dẫn ảnh thẻ phải thuộc thư mục riêng tư của chính người dùng (hoặc dạng Base64 data URL)
-  const expectedPrefix = `private/cards/${userId}/`;
-  const isDataUrl = data.cardStoragePath.startsWith("data:image/");
-  if (!data.cardStoragePath.startsWith(expectedPrefix) && !isDataUrl) {
-    throw new ApiError(
-      400,
-      "INVALID_CARD_PATH",
-      "Tệp ảnh thẻ sinh viên không hợp lệ hoặc không thuộc tài khoản của bạn."
-    );
+  // 4. Kiểm tra đường dẫn ảnh thẻ phải thuộc thư mục riêng tư của chính người dùng
+  const CARD_PATH_RE = new RegExp(`^private/cards/${userId}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`);
+  if (!CARD_PATH_RE.test(data.cardStoragePath)) {
+    throw new ApiError(400, "INVALID_CARD_PATH", "Tệp ảnh thẻ sinh viên không hợp lệ hoặc không thuộc tài khoản của bạn.");
   }
-
-  // Kiểm tra file tồn tại trên Storage nếu dùng đường dẫn Storage
-  if (!isDataUrl) {
-    try {
-      const bucket = adminStorage.bucket();
-      const file = bucket.file(data.cardStoragePath);
-      const [exists] = await file.exists();
-      if (!exists && process.env.NODE_ENV === "production") {
-        throw new ApiError(
-          400,
-          "CARD_FILE_NOT_FOUND",
-          "Không tìm thấy tệp ảnh thẻ sinh viên trên hệ thống lưu trữ. Vui lòng tải lại ảnh."
-        );
-      }
-    } catch (err) {
-      if (err instanceof ApiError) throw err;
-      // Bỏ qua lỗi kết nối bucket trong môi trường test/local nếu bucket chưa khởi tạo
-    }
+  const cardFile = adminStorage.bucket().file(data.cardStoragePath);
+  const [cardExists] = await cardFile.exists();
+  if (!cardExists) {
+    throw new ApiError(400, "CARD_FILE_NOT_FOUND", "Không tìm thấy tệp ảnh thẻ trên hệ thống lưu trữ. Vui lòng tải lại ảnh.");
+  }
+  const [meta] = await cardFile.getMetadata();
+  if (!/^image\/(webp|jpeg)$/.test(String(meta.contentType)) || Number(meta.size) > 10 * 1024 * 1024) {
+    throw new ApiError(400, "INVALID_CARD_FILE", "Ảnh thẻ phải là WebP/JPEG dưới 10MB.");
   }
 
   // 5. Kiểm tra trường học và campus

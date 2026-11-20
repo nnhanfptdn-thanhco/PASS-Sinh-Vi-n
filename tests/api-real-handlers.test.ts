@@ -118,7 +118,7 @@ describe("Kiểm thử Route Handlers thực tế (WP-9.1)", () => {
     const res = await POST(req);
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toContain("ảnh");
+    expect(body.error.toLowerCase()).toContain("ảnh");
   });
 
   it("POST /api/listings/create: từ chối tiêu đề chứa số điện thoại (chống lộ thông tin liên hệ)", async () => {

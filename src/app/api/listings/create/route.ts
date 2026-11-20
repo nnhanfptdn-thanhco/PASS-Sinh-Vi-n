@@ -67,26 +67,28 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
-  // 5. Kiểm tra tính hợp lệ của ảnh (hỗ trợ cả Base64 WebP miễn phí, link ảnh công khai và Cloud Storage)
-  for (const imgUrl of data.images) {
-    if (!imgUrl || typeof imgUrl !== "string") {
-      throw new ApiError(400, "INVALID_IMAGE_URL", "Đường dẫn ảnh không hợp lệ.");
+  // 5. Kiểm tra tính hợp lệ của ảnh (chỉ nhận URL Storage của chính người bán)
+  const BUCKET =
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+    process.env.FIREBASE_STORAGE_BUCKET ||
+    "";
+  function isOwnListingImage(url: string, uid: string): boolean {
+    try {
+      const u = new URL(url);
+      if (u.protocol !== "https:" || u.hostname !== "firebasestorage.googleapis.com") return false;
+      // /v0/b/<bucket>/o/<encodedPath>
+      const m = /^\/v0\/b\/([^/]+)\/o\/(.+)$/.exec(u.pathname);
+      if (!m || (BUCKET && m[1] !== BUCKET)) return false;
+      const objectPath = decodeURIComponent(m[2]);
+      return new RegExp(`^public/listings/${uid}/[A-Za-z0-9_-]{8,64}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`).test(objectPath);
+    } catch {
+      return false;
     }
-    const isValidFormat =
-      imgUrl.startsWith("data:image/") ||
-      imgUrl.startsWith("/api/images/") ||
-      imgUrl.startsWith("http://") ||
-      imgUrl.startsWith("https://") ||
-      imgUrl.startsWith("blob:") ||
-      imgUrl.includes(`public/listings/${sellerId}/`) ||
-      imgUrl.includes(`public%2Flistings%2F${sellerId}%2F`);
+  }
 
-    if (!isValidFormat) {
-      throw new ApiError(
-        400,
-        "INVALID_IMAGE_URL",
-        "Định dạng ảnh không hợp lệ. Vui lòng chọn ảnh định dạng hợp lệ."
-      );
+  for (const imgUrl of [...data.images, ...(data.thumbs ?? [])]) {
+    if (!isOwnListingImage(imgUrl, sellerId)) {
+      throw new ApiError(400, "INVALID_IMAGE_URL", "Ảnh phải được tải lên qua hệ thống của Chợ Pass.");
     }
   }
 

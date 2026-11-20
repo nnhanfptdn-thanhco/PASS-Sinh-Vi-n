@@ -3,7 +3,8 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthContext";
-import { authFetch } from "@/lib/firebase/client";
+import { storage, authFetch } from "@/lib/firebase/client";
+import { ref, uploadBytes } from "firebase/storage";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -129,12 +130,12 @@ function OnboardingContent() {
 
     setIsSubmitting(true);
     try {
-      // 1. Chuyển đổi ảnh thẻ sang Base64 Data URL (0ms tức thì, không bị treo mạng, 100% miễn phí)
-      const reader = new FileReader();
-      const storagePath = await new Promise<string>((resolve, reject) => {
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(cardImageBlob);
+      // 1. Upload ảnh thẻ lên Storage riêng tư (chỉ chủ + admin đọc được)
+      const ext = cardImageBlob.type === "image/jpeg" ? "jpg" : "webp";
+      const fileId = crypto.randomUUID().replace(/-/g, "").slice(0, 24); // khớp regex [A-Za-z0-9_-]{4,64}
+      const storagePath = `private/cards/${user.uid}/${fileId}.${ext}`;
+      await uploadBytes(ref(storage, storagePath), cardImageBlob, {
+        contentType: cardImageBlob.type === "image/jpeg" ? "image/jpeg" : "image/webp",
       });
 
       // 2. Gửi metadata tới server route
