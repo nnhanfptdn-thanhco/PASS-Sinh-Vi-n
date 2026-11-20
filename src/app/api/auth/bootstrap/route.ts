@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/server/auth-guard";
-import { withApi } from "@/lib/server/http";
+import { withApi, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { adminAuth, adminDb, FieldValue, hasAdminCredentials } from "@/lib/firebase/admin";
 
@@ -9,6 +9,9 @@ export const dynamic = "force-dynamic";
 
 export const POST = withApi(async (req: NextRequest) => {
   if (!hasAdminCredentials) {
+    if (process.env.NODE_ENV === "production") {
+      throw new ApiError(503, "SERVER_NOT_CONFIGURED", "Máy chủ chưa cấu hình xác thực quản trị.");
+    }
     return NextResponse.json({
       ok: true,
       claimsChanged: false,
@@ -95,8 +98,7 @@ export const POST = withApi(async (req: NextRequest) => {
 
     // 2. Admin Bootstrap: Tự động gán quyền Admin nếu email nằm trong ADMIN_EMAILS
     let claimsChanged = false;
-    const adminEmailsConfig =
-      process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "nnhanfptdn@gmail.com,admin@chopass.vn";
+    const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "";
     const adminEmails = adminEmailsConfig
       .split(",")
       .map((e) => e.trim().toLowerCase())

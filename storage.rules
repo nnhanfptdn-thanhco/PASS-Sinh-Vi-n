@@ -13,16 +13,14 @@ service firebase.storage {
     function isAdmin() {
       return isAuthenticated() && (
         request.auth.token.admin == true ||
-        request.auth.token.role == 'admin' ||
-        (request.auth.token.email != null && request.auth.token.email.lower() in ['nnhanfptdn@gmail.com', 'admin@chopass.vn'])
+        request.auth.token.role == 'admin'
       );
     }
 
     function isVerified() {
       return isAuthenticated() && (
         request.auth.token.verified == true ||
-        isAdmin() ||
-        (request.auth.token.email != null && request.auth.token.email.matches('.*@.*'))
+        isAdmin()
       );
     }
 
