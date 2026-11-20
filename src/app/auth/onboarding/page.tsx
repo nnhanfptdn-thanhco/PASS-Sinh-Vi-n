@@ -107,7 +107,7 @@ function OnboardingContent() {
     if (!file) return;
 
     try {
-      const result = await compressAndAnalyzeImage(file, 1600, 0.85);
+      const result = await compressAndAnalyzeImage(file, 800, 0.75);
       setCardImagePreview(result.dataUrl);
       setCardImageBlob(result.blob);
       setQualityCheck(result.quality);
@@ -167,7 +167,11 @@ function OnboardingContent() {
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error?.message || errJson.error || "Không thể gửi hồ sơ xác minh tới máy chủ.");
+        const serverError =
+          (typeof errJson.error === "string" ? errJson.error : errJson.error?.message) ||
+          errJson.message ||
+          `Máy chủ phản hồi mã lỗi ${res.status}. Vui lòng thử lại.`;
+        throw new Error(serverError);
       }
 
       // 3. KHÔNG tự động gán verified giả vào localStorage!
