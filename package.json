@@ -25,6 +25,15 @@
     "tailwind-merge": "^3.7.0",
     "zod": "^4.6.7"
   },
+  "engines": {
+    "node": "22.x"
+  },
+  "overrides": {
+    "firebase-admin": {
+      "jwks-rsa": "3.1.0"
+    },
+    "jwks-rsa": "3.1.0"
+  },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^6.0.0",
     "@testing-library/react": "^16.3.3",
