@@ -22,6 +22,7 @@ export const MAX_PENDING_RESERVATIONS_PER_LISTING = 3; // Tối đa 3 pending/ti
 export const MAX_PENDING_RESERVATIONS_PER_BUYER = 5; // Tối đa 5 pending/người mua
 export const PENDING_RESERVATION_EXPIRY_HOURS = 24; // Hạn chờ xác nhận: 24h
 export const CONFIRMED_HOLD_EXPIRY_HOURS = 72; // Hạn giữ sau khi xác nhận: 72h
+export const NO_SHOW_MIN_WAIT_MINUTES = 60; // Thời gian chờ tối thiểu trước khi báo vắng mặt (60 phút)
 
 // Hạn pass đồ
 export const MAX_PASS_DEADLINE_DAYS = 30; // Hạn pass tối đa 30 ngày từ hôm nay

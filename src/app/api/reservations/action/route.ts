@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireApprovedStudent } from "@/lib/auth/server";
 import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import type { QuerySnapshot, DocumentData } from "firebase-admin/firestore";
 import { z } from "zod";
 import { isPastDeadline } from "@/lib/utils/date";
+import { NO_SHOW_MIN_WAIT_MINUTES } from "@/lib/constants/listing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,6 +65,39 @@ export const POST = withApi(async (req: NextRequest) => {
     const currentListingStatus = listingData.status as string;
     const passDeadline = (listingData.passDeadline as string) || "";
 
+    // ===== READ PHASE: TOÀN BỘ transaction.get PHẢI Ở ĐÂY, TRƯỚC MỌI GHI =====
+    const resCol = adminDb.collection("reservations");
+    const privateSnap = await transaction.get(listingPrivateRef);
+
+    let otherPendingSnap: QuerySnapshot<DocumentData> | null = null;
+    let waitlistedSnap: QuerySnapshot<DocumentData> | null = null;
+    let remainingSnap: QuerySnapshot<DocumentData> | null = null;
+
+    if (action === "confirm") {
+      otherPendingSnap = await transaction.get(
+        resCol.where("listingId", "==", listingId).where("status", "==", "pending")
+      );
+    }
+    if ((action === "cancel" && currentResStatus === "confirmed") || action === "no_show") {
+      waitlistedSnap = await transaction.get(
+        resCol
+          .where("listingId", "==", listingId)
+          .where("status", "==", "waitlisted")
+          .orderBy("createdAt", "asc")
+          .limit(1)
+      );
+    }
+    if (action === "complete") {
+      remainingSnap = await transaction.get(
+        resCol
+          .where("listingId", "==", listingId)
+          .where("status", "in", ["pending", "waitlisted"])
+      );
+    }
+    // ===== HẾT READ PHASE — từ đây CHỈ ghi =====
+
+    const sanitizedReason = reason?.trim().slice(0, 300);
+
     // 3. THỰC HIỆN HÀNH ĐỘNG THEO BẢNG 2.4
 
     // --- 3.1 XÁC NHẬN GIỮ CHỖ (CONFIRM) ---
@@ -79,41 +114,41 @@ export const POST = withApi(async (req: NextRequest) => {
         );
       }
 
-      // Kiểm tra hạn 24h của yêu cầu pending
-      const expiresAt = resData.expiresAt ? new Date(resData.expiresAt as string).getTime() : 0;
-      if (expiresAt > 0 && Date.now() > expiresAt) {
+      // Kiểm tra tin đăng có còn active không
+      if (currentListingStatus !== "active") {
         throw new ApiError(
           409,
-          "RESERVATION_EXPIRED",
-          "Yêu cầu giữ chỗ này đã quá hạn 24 giờ và không thể xác nhận."
+          "LISTING_NOT_AVAILABLE",
+          `Món đồ này hiện không ở trạng thái sẵn sàng để giữ chỗ (trạng thái: ${currentListingStatus}).`
         );
       }
 
-      // Kiểm tra tin còn active và chưa quá hạn
-      if (currentListingStatus !== "active" || isPastDeadline(passDeadline)) {
+      // Kiểm tra hạn pass của tin
+      if (isPastDeadline(passDeadline)) {
         throw new ApiError(
           409,
-          "LISTING_NOT_ACTIVE",
-          "Món đồ hiện không còn khả dụng hoặc đã có người khác được xác nhận giữ chỗ trước."
+          "LISTING_EXPIRED",
+          "Món đồ này đã quá hạn pass đồ, không thể xác nhận giữ chỗ."
         );
       }
 
-      // Chuyển giữ chỗ sang confirmed và đặt hạn giữ 72h
-      const holdExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
+      // Xác nhận giữ chỗ: 72 giờ (3 ngày) để 2 bên gặp gỡ
+      const confirmedExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
+
       transaction.update(resRef, {
         status: "confirmed",
         confirmedAt: FieldValue.serverTimestamp(),
-        holdExpiresAt,
+        expiresAt: confirmedExpiresAt,
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // Đổi trạng thái tin sang reserved
+      // Chuyển tin đăng sang reserved
       transaction.update(listingRef, {
         status: "reserved",
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // Mở quyền xem địa chỉ chính xác cho người mua được duyệt trong listingsPrivate
+      // Lưu confirmedBuyerId vào listingsPrivate
       transaction.set(
         listingPrivateRef,
         {
@@ -124,54 +159,50 @@ export const POST = withApi(async (req: NextRequest) => {
       );
 
       // Đẩy tất cả các yêu cầu pending khác của tin này sang hàng chờ dự phòng (waitlisted)
-      const otherPendingSnap = await transaction.get(
-        adminDb
-          .collection("reservations")
-          .where("listingId", "==", listingId)
-          .where("status", "==", "pending")
-      );
+      if (otherPendingSnap) {
+        otherPendingSnap.forEach((doc) => {
+          if (doc.id !== reservationId) {
+            transaction.update(doc.ref, {
+              status: "waitlisted",
+              updatedAt: FieldValue.serverTimestamp(),
+            });
 
-      otherPendingSnap.forEach((doc) => {
-        if (doc.id !== reservationId) {
-          transaction.update(doc.ref, {
-            status: "waitlisted",
-            updatedAt: FieldValue.serverTimestamp(),
-          });
+            const notifRef = adminDb.collection("notifications").doc();
+            transaction.set(notifRef, {
+              userId: doc.data().buyerId,
+              type: "reservation_waitlisted",
+              title: "Cập nhật yêu cầu giữ chỗ 📋",
+              body: `Món đồ "${listingData.title}" đã được người bán đồng ý giữ cho bạn sinh viên gửi trước. Bạn đã được chuyển vào hàng chờ dự phòng tự động.`,
+              targetId: doc.id,
+              read: false,
+              createdAt: FieldValue.serverTimestamp(),
+            });
+          }
+        });
+      }
 
-          const notifRef = adminDb.collection("notifications").doc();
-          transaction.set(notifRef, {
-            userId: doc.data().buyerId,
-            type: "reservation_waitlisted",
-            title: "Cập nhật yêu cầu giữ chỗ 📋",
-            body: `Món đồ "${listingData.title}" đã được người bán đồng ý giữ cho bạn sinh viên gửi trước. Bạn đã được chuyển vào hàng chờ dự phòng tự động.`,
-            targetId: doc.id,
-            read: false,
-            createdAt: FieldValue.serverTimestamp(),
-          });
-        }
-      });
-
-      // Thông báo cho người mua được xác nhận
-      const confirmNotifRef = adminDb.collection("notifications").doc();
-      transaction.set(confirmNotifRef, {
+      // Thông báo cho người mua: Đã được xác nhận giữ chỗ thành công + Xem địa chỉ chính xác
+      const buyerNotifRef = adminDb.collection("notifications").doc();
+      transaction.set(buyerNotifRef, {
         userId: buyerId,
         type: "reservation_confirmed",
-        title: "Lời giữ chỗ của bạn ĐÃ ĐƯỢC XÁC NHẬN! 🎉",
-        body: `Người bán đã đồng ý giữ chỗ món đồ "${listingData.title}" cho bạn. Thông tin liên hệ và địa chỉ chính xác đã được mở tại mục Giữ chỗ.`,
+        title: "Yêu cầu giữ chỗ đã được xác nhận! 🎉",
+        body: `Người bán đã xác nhận giữ món đồ "${listingData.title}" cho bạn trong 72 giờ tới. Bạn có thể xem địa chỉ hẹn chính xác ngay bây giờ!`,
         targetId: reservationId,
         read: false,
         createdAt: FieldValue.serverTimestamp(),
       });
 
       return {
-        message: "Đã xác nhận giữ chỗ thành công! Tin đăng chuyển sang trạng thái đã có người giữ.",
+        message: "Đã xác nhận giữ chỗ thành công trong 72 giờ.",
+        expiresAt: confirmedExpiresAt,
       };
     }
 
-    // --- 3.2 TỪ CHỐI (REJECT) ---
+    // --- 3.2 TỪ CHỐI GIỮ CHỖ (REJECT) ---
     if (action === "reject") {
       if (!isSeller && !isAdmin) {
-        throw new ApiError(403, "FORBIDDEN", "Chỉ người bán mới có quyền từ chối giữ chỗ.");
+        throw new ApiError(403, "FORBIDDEN", "Chỉ người bán mới có quyền từ chối yêu cầu giữ chỗ.");
       }
 
       if (currentResStatus !== "pending" && currentResStatus !== "waitlisted") {
@@ -184,7 +215,7 @@ export const POST = withApi(async (req: NextRequest) => {
 
       transaction.update(resRef, {
         status: "rejected",
-        cancelReason: reason || "Người bán đã từ chối yêu cầu",
+        cancelReason: sanitizedReason || "Người bán đã từ chối yêu cầu",
         updatedAt: FieldValue.serverTimestamp(),
       });
 
@@ -193,7 +224,7 @@ export const POST = withApi(async (req: NextRequest) => {
         userId: buyerId,
         type: "reservation_rejected",
         title: "Yêu cầu giữ chỗ đã bị từ chối",
-        body: `Người bán đã từ chối yêu cầu giữ chỗ cho món đồ "${listingData.title}". ${reason ? `Lý do: ${reason}` : ""}`,
+        body: `Người bán đã từ chối yêu cầu giữ chỗ cho món đồ "${listingData.title}". ${sanitizedReason ? `Lý do: ${sanitizedReason}` : ""}`,
         targetId: reservationId,
         read: false,
         createdAt: FieldValue.serverTimestamp(),
@@ -216,52 +247,77 @@ export const POST = withApi(async (req: NextRequest) => {
         );
       }
 
+      const cancelledByRole = isBuyer ? "buyer" : isSeller ? "seller" : "admin";
+
       // Nếu đang là pending hoặc waitlisted: Người mua hoặc người bán hủy không ảnh hưởng tin đăng
       if (currentResStatus === "pending" || currentResStatus === "waitlisted") {
         transaction.update(resRef, {
           status: "cancelled",
-          cancelledBy: isBuyer ? "buyer" : "seller",
-          cancelReason: reason || (isBuyer ? "Người mua đã hủy yêu cầu" : "Người bán đã hủy"),
+          cancelledBy: cancelledByRole,
+          cancelReason: sanitizedReason || (isBuyer ? "Người mua đã hủy yêu cầu" : isSeller ? "Người bán đã hủy" : "Quản trị viên đã hủy yêu cầu"),
           cancelledAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         });
 
-        // Báo cho bên còn lại
-        const targetNotifyUid = isBuyer ? sellerId : buyerId;
-        const notifRef = adminDb.collection("notifications").doc();
-        transaction.set(notifRef, {
-          userId: targetNotifyUid,
-          type: "reservation_cancelled",
-          title: "Yêu cầu giữ chỗ đã bị hủy",
-          body: `${isBuyer ? "Người mua" : "Người bán"} đã hủy yêu cầu giữ chỗ món đồ "${listingData.title}".`,
-          targetId: reservationId,
-          read: false,
-          createdAt: FieldValue.serverTimestamp(),
-        });
+        if (isAdmin && !isBuyer && !isSeller) {
+          const notifBuyer = adminDb.collection("notifications").doc();
+          transaction.set(notifBuyer, {
+            userId: buyerId,
+            type: "reservation_cancelled",
+            title: "Yêu cầu giữ chỗ đã bị hủy",
+            body: `Quản trị viên đã hủy yêu cầu giữ chỗ món đồ "${listingData.title}". ${sanitizedReason ? `Lý do: ${sanitizedReason}` : ""}`,
+            targetId: reservationId,
+            read: false,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+          const notifSeller = adminDb.collection("notifications").doc();
+          transaction.set(notifSeller, {
+            userId: sellerId,
+            type: "reservation_cancelled",
+            title: "Yêu cầu giữ chỗ đã bị hủy",
+            body: `Quản trị viên đã hủy yêu cầu giữ chỗ món đồ "${listingData.title}". ${sanitizedReason ? `Lý do: ${sanitizedReason}` : ""}`,
+            targetId: reservationId,
+            read: false,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+        } else {
+          const targetNotifyUid = isBuyer ? sellerId : buyerId;
+          const notifRef = adminDb.collection("notifications").doc();
+          transaction.set(notifRef, {
+            userId: targetNotifyUid,
+            type: "reservation_cancelled",
+            title: "Yêu cầu giữ chỗ đã bị hủy",
+            body: `${isBuyer ? "Người mua" : "Người bán"} đã hủy yêu cầu giữ chỗ món đồ "${listingData.title}".`,
+            targetId: reservationId,
+            read: false,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+        }
 
         return { message: "Đã hủy yêu cầu giữ chỗ thành công." };
       }
 
       // Nếu đang là confirmed: Người mua hoặc người bán hủy
       // Kiểm tra: Chỉ đưa tin về active nếu confirmedBuyerId trùng với người mua này
-      const privateSnap = await transaction.get(listingPrivateRef);
       const confirmedBuyerId = privateSnap.data()?.confirmedBuyerId;
 
       transaction.update(resRef, {
         status: "cancelled",
-        cancelledBy: isBuyer ? "buyer" : "seller",
-        cancelReason: reason || (isBuyer ? "Người mua đã hủy giao dịch" : "Người bán đã hủy giao dịch"),
+        cancelledBy: cancelledByRole,
+        cancelReason: sanitizedReason || (isBuyer ? "Người mua đã hủy giao dịch" : isSeller ? "Người bán đã hủy giao dịch" : "Quản trị viên đã hủy giao dịch"),
         cancelledAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
 
       if (confirmedBuyerId === buyerId) {
-        // Đưa tin về active nếu còn hạn
-        const isExpired = isPastDeadline(passDeadline);
-        transaction.update(listingRef, {
-          status: isExpired ? "expired" : "active",
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+        // Chỉ mở lại tin nếu nó đang thực sự ở trạng thái reserved
+        if (currentListingStatus === "reserved") {
+          const isExpired = isPastDeadline(passDeadline);
+          transaction.update(listingRef, {
+            status: isExpired ? "expired" : "active",
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
 
         // Khóa lại địa chỉ chính xác
         transaction.set(
@@ -271,16 +327,7 @@ export const POST = withApi(async (req: NextRequest) => {
         );
 
         // Đẩy bạn sớm nhất trong waitlisted lên pending với HẠN 24H MỚI
-        const waitlistedSnap = await transaction.get(
-          adminDb
-            .collection("reservations")
-            .where("listingId", "==", listingId)
-            .where("status", "==", "waitlisted")
-            .orderBy("createdAt", "asc")
-            .limit(1)
-        );
-
-        if (!waitlistedSnap.empty) {
+        if (waitlistedSnap && !waitlistedSnap.empty) {
           const nextReq = waitlistedSnap.docs[0];
           const nextBuyerId = nextReq.data().buyerId;
           const newExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -291,13 +338,13 @@ export const POST = withApi(async (req: NextRequest) => {
             updatedAt: FieldValue.serverTimestamp(),
           });
 
-          // Báo cho người mua kế tiếp
+          // Báo cho bạn được đôn lên
           const nextBuyerNotif = adminDb.collection("notifications").doc();
           transaction.set(nextBuyerNotif, {
             userId: nextBuyerId,
             type: "waitlist_promoted",
-            title: "Cơ hội nhận đồ pass: Bạn đã lên hàng đầu! 🎉",
-            body: `Do giao dịch trước đã bị hủy, yêu cầu của bạn cho món đồ "${listingData.title}" đã được đưa lên cho người bán xác nhận. Hạn duyệt là 24 giờ tới.`,
+            title: "Bạn đã được chuyển lên hàng đầu! 🎉",
+            body: `Do giao dịch trước đó đã bị hủy, yêu cầu của bạn cho món đồ "${listingData.title}" đã được chuyển lên cho người bán xác nhận trong 24 giờ tới.`,
             targetId: nextReq.id,
             read: false,
             createdAt: FieldValue.serverTimestamp(),
@@ -318,17 +365,40 @@ export const POST = withApi(async (req: NextRequest) => {
       }
 
       // Thông báo cho bên còn lại
-      const targetNotifyUid = isBuyer ? sellerId : buyerId;
-      const cancelNotif = adminDb.collection("notifications").doc();
-      transaction.set(cancelNotif, {
-        userId: targetNotifyUid,
-        type: "reservation_cancelled",
-        title: "Giao dịch giữ chỗ đã bị hủy",
-        body: `${isBuyer ? "Người mua" : "Người bán"} đã hủy giao dịch giữ chỗ món đồ "${listingData.title}".`,
-        targetId: reservationId,
-        read: false,
-        createdAt: FieldValue.serverTimestamp(),
-      });
+      if (isAdmin && !isBuyer && !isSeller) {
+        const notifBuyer = adminDb.collection("notifications").doc();
+        transaction.set(notifBuyer, {
+          userId: buyerId,
+          type: "reservation_cancelled",
+          title: "Giao dịch giữ chỗ đã bị hủy ❌",
+          body: `Quản trị viên đã hủy giao dịch giữ chỗ cho món đồ "${listingData.title}". ${sanitizedReason ? `Lý do: ${sanitizedReason}` : ""}`,
+          targetId: reservationId,
+          read: false,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        const notifSeller = adminDb.collection("notifications").doc();
+        transaction.set(notifSeller, {
+          userId: sellerId,
+          type: "reservation_cancelled",
+          title: "Giao dịch giữ chỗ đã bị hủy ❌",
+          body: `Quản trị viên đã hủy giao dịch giữ chỗ cho món đồ "${listingData.title}". ${sanitizedReason ? `Lý do: ${sanitizedReason}` : ""}`,
+          targetId: reservationId,
+          read: false,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      } else {
+        const targetNotifyUid = isBuyer ? sellerId : buyerId;
+        const cancelNotif = adminDb.collection("notifications").doc();
+        transaction.set(cancelNotif, {
+          userId: targetNotifyUid,
+          type: "reservation_cancelled",
+          title: "Giao dịch giữ chỗ đã bị hủy",
+          body: `${isBuyer ? "Người mua" : "Người bán"} đã hủy giao dịch giữ chỗ món đồ "${listingData.title}".`,
+          targetId: reservationId,
+          read: false,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      }
 
       return { message: "Đã hủy giao dịch giữ chỗ thành công." };
     }
@@ -347,9 +417,23 @@ export const POST = withApi(async (req: NextRequest) => {
         );
       }
 
+      const confirmedAtMs =
+        (resData.confirmedAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0;
+      if (
+        confirmedAtMs &&
+        Date.now() - confirmedAtMs < NO_SHOW_MIN_WAIT_MINUTES * 60_000 &&
+        !isAdmin
+      ) {
+        throw new ApiError(
+          409,
+          "NO_SHOW_TOO_EARLY",
+          `Chỉ được báo vắng mặt sau ${NO_SHOW_MIN_WAIT_MINUTES} phút kể từ khi xác nhận giữ chỗ.`
+        );
+      }
+
       transaction.update(resRef, {
         status: "no_show",
-        cancelReason: reason || "Người mua không đến theo hẹn",
+        cancelReason: sanitizedReason || "Người mua không đến theo hẹn",
         cancelledAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
@@ -365,12 +449,14 @@ export const POST = withApi(async (req: NextRequest) => {
         { merge: true }
       );
 
-      // Đưa tin về active nếu còn hạn
-      const isExpired = isPastDeadline(passDeadline);
-      transaction.update(listingRef, {
-        status: isExpired ? "expired" : "active",
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      // Đưa tin về active nếu còn hạn và tin đang ở trạng thái reserved
+      if (currentListingStatus === "reserved") {
+        const isExpired = isPastDeadline(passDeadline);
+        transaction.update(listingRef, {
+          status: isExpired ? "expired" : "active",
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
 
       // Khóa lại địa chỉ chính xác
       transaction.set(
@@ -380,16 +466,7 @@ export const POST = withApi(async (req: NextRequest) => {
       );
 
       // Đẩy waitlist lên pending
-      const waitlistedSnap = await transaction.get(
-        adminDb
-          .collection("reservations")
-          .where("listingId", "==", listingId)
-          .where("status", "==", "waitlisted")
-          .orderBy("createdAt", "asc")
-          .limit(1)
-      );
-
-      if (!waitlistedSnap.empty) {
+      if (waitlistedSnap && !waitlistedSnap.empty) {
         const nextReq = waitlistedSnap.docs[0];
         const nextBuyerId = nextReq.data().buyerId;
         const newExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -404,27 +481,29 @@ export const POST = withApi(async (req: NextRequest) => {
         transaction.set(nextNotif, {
           userId: nextBuyerId,
           type: "waitlist_promoted",
-          title: "Cơ hội nhận đồ pass: Bạn đã lên hàng đầu! 🎉",
-          body: `Món đồ "${listingData.title}" đã mở lại. Yêu cầu của bạn đã được đưa lên hàng đầu chờ người bán duyệt.`,
+          title: "Bạn đã được chuyển lên hàng đầu! 🎉",
+          body: `Do giao dịch trước đó không thành công, bạn đã được đưa lên cho người bán xác nhận món đồ "${listingData.title}" trong 24 giờ tới.`,
           targetId: nextReq.id,
           read: false,
           createdAt: FieldValue.serverTimestamp(),
         });
       }
 
-      // Thông báo cho người mua bị đánh dấu no_show
-      const buyerNoShowNotif = adminDb.collection("notifications").doc();
-      transaction.set(buyerNoShowNotif, {
+      // Thông báo cho người mua bị đánh dấu no-show
+      const noShowNotif = adminDb.collection("notifications").doc();
+      transaction.set(noShowNotif, {
         userId: buyerId,
         type: "reservation_no_show",
-        title: "Cảnh báo vắng mặt không đến nhận đồ ⚠️",
-        body: `Người bán đã ghi nhận bạn không đến điểm hẹn nhận món đồ "${listingData.title}". Việc vắng mặt nhiều lần có thể làm giảm uy tín tài khoản của bạn.`,
+        title: "Ghi nhận vắng mặt trong giao dịch hẹn ⚠️",
+        body: `Người bán đã báo bạn không đến điểm hẹn nhận món đồ "${listingData.title}". Tài khoản của bạn đã bị ghi nhận 1 lần vắng mặt.`,
         targetId: reservationId,
         read: false,
         createdAt: FieldValue.serverTimestamp(),
       });
 
-      return { message: "Đã ghi nhận người mua không đến và đưa tin về trạng thái mở." };
+      return {
+        message: "Đã ghi nhận người mua vắng mặt và mở lại tin đăng thành công.",
+      };
     }
 
     // --- 3.5 HOÀN TẤT GIAO DỊCH (COMPLETE) ---
@@ -464,33 +543,28 @@ export const POST = withApi(async (req: NextRequest) => {
       );
 
       // Hủy tất cả các yêu cầu còn lại (waitlisted / pending khác)
-      const remainingSnap = await transaction.get(
-        adminDb
-          .collection("reservations")
-          .where("listingId", "==", listingId)
-          .where("status", "in", ["pending", "waitlisted"])
-      );
+      if (remainingSnap) {
+        remainingSnap.forEach((doc) => {
+          transaction.update(doc.ref, {
+            status: "cancelled",
+            cancelledBy: "system",
+            cancelReason: "Món đồ đã được pass thành công cho người khác",
+            cancelledAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
 
-      remainingSnap.forEach((doc) => {
-        transaction.update(doc.ref, {
-          status: "cancelled",
-          cancelledBy: "system",
-          cancelReason: "Món đồ đã được pass thành công cho người khác",
-          cancelledAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
+          const cancelNotif = adminDb.collection("notifications").doc();
+          transaction.set(cancelNotif, {
+            userId: doc.data().buyerId,
+            type: "reservation_cancelled",
+            title: "Món đồ đã được pass cho người khác",
+            body: `Món đồ "${listingData.title}" bạn đang chờ đã được bán thành công cho bạn sinh viên trước.`,
+            targetId: doc.id,
+            read: false,
+            createdAt: FieldValue.serverTimestamp(),
+          });
         });
-
-        const cancelNotif = adminDb.collection("notifications").doc();
-        transaction.set(cancelNotif, {
-          userId: doc.data().buyerId,
-          type: "reservation_cancelled",
-          title: "Món đồ đã được pass cho người khác",
-          body: `Món đồ "${listingData.title}" bạn đang chờ đã được bán thành công cho bạn sinh viên trước.`,
-          targetId: doc.id,
-          read: false,
-          createdAt: FieldValue.serverTimestamp(),
-        });
-      });
+      }
 
       // Tăng completedDealsCount của người bán
       const sellerUserRef = adminDb.collection("users").doc(sellerId);
