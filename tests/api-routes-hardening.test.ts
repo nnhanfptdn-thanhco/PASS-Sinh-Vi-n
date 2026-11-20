@@ -4,6 +4,9 @@ import { requireAuth, requireVerified, requireAdmin } from "../src/lib/server/au
 import { readJson, ApiError, withApi } from "../src/lib/server/http";
 import { hasContactInfo, createListingSchema } from "../src/lib/server/schemas";
 import { adminAuth, adminDb } from "../src/lib/firebase/admin";
+import { addDaysVN, todayVN } from "../src/lib/utils/date";
+
+const FUTURE = addDaysVN(todayVN(), 10);
 
 describe("Prompt 2: Hardening API Infrastructure & Guards", () => {
   beforeEach(() => {
@@ -140,7 +143,7 @@ describe("Prompt 2: Hardening API Infrastructure & Guards", () => {
         categoryId: "dien-may",
         condition: "Tốt",
         price: 150000,
-        passDeadline: "2026-11-25",
+        passDeadline: FUTURE,
         schoolCode: "FPT-DN",
         publicMeetingPoint: "Cổng KTX",
         exactAddress: "Phòng 301",

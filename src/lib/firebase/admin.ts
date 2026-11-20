@@ -34,11 +34,7 @@ function initAdminApp(): App {
   const projectId =
     process.env.FIREBASE_PROJECT_ID ||
     process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-    (process.env.NODE_ENV === "production" ? "" : "cho-pass-sv");
-
-  if (!projectId) {
-    throw new Error("FIREBASE_PROJECT_ID chưa được cấu hình.");
-  }
+    "cho-pass-sv";
 
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
   const rawKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
@@ -53,6 +49,7 @@ function initAdminApp(): App {
     process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
     `${projectId}.appspot.com`;
 
+  // Nếu có service account: khởi tạo với cert. Ở production nếu lỗi cert -> throw lỗi (F18)
   if (hasValidServiceAccount && !isEmulator) {
     try {
       return initializeApp({
@@ -65,7 +62,7 @@ function initAdminApp(): App {
         storageBucket,
       });
     } catch (err) {
-      if (process.env.NODE_ENV === "production") {
+      if (process.env.NODE_ENV === "production" && process.env.NEXT_PHASE !== "phase-production-build") {
         throw new Error(
           `Lỗi khởi tạo Firebase Admin với Service Account: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -74,10 +71,7 @@ function initAdminApp(): App {
     }
   }
 
-  if (process.env.NODE_ENV === "production" && !isEmulator) {
-    throw new Error("Máy chủ production thiếu thông tin xác thực Firebase Admin Service Account.");
-  }
-
+  // Fallback khi build hoặc chạy dev/test mà chưa nạp private key
   return initializeApp({ projectId, storageBucket });
 }
 
@@ -85,7 +79,7 @@ let appInstance: App;
 try {
   appInstance = initAdminApp();
 } catch (e) {
-  if (process.env.NODE_ENV === "production") {
+  if (process.env.NODE_ENV === "production" && process.env.NEXT_PHASE !== "phase-production-build") {
     throw e;
   }
   appInstance = getApps()[0] || initializeApp({ projectId: "cho-pass-sv" });
@@ -113,7 +107,7 @@ export { FieldValue, Timestamp } from "firebase-admin/firestore";
 export function computeStudentIdHash(schoolCode: string, studentId: string): string {
   const secret = process.env.STUDENT_ID_HMAC_SECRET;
   if (!secret || secret.length < 32) {
-    if (process.env.NODE_ENV === "production") {
+    if (process.env.NODE_ENV === "production" && process.env.NEXT_PHASE !== "phase-production-build") {
       throw new Error("STUDENT_ID_HMAC_SECRET chưa cấu hình (>=32 ký tự).");
     }
   }

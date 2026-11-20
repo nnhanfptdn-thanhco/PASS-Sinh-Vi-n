@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { addDaysVN, todayVN } from "../src/lib/utils/date";
+
+const FUTURE = addDaysVN(todayVN(), 10);
 
 // Mock server-only
 vi.mock("server-only", () => ({}));
@@ -106,7 +109,7 @@ describe("Kiểm thử Route Handlers thực tế (WP-9.1)", () => {
         categoryId: "giao-trinh",
         condition: "good",
         price: 50000,
-        passDeadline: "2026-12-01",
+        passDeadline: FUTURE,
         shippingMethods: { pickup: true },
         images: [
           "malicious-file.exe",
@@ -131,7 +134,7 @@ describe("Kiểm thử Route Handlers thực tế (WP-9.1)", () => {
         categoryId: "do-gia-dung",
         condition: "good",
         price: 100000,
-        passDeadline: "2026-12-01",
+        passDeadline: FUTURE,
         shippingMethods: { pickup: true },
         images: [
           "https://firebasestorage.googleapis.com/v0/b/bucket/o/public%2Flistings%2Fuser-123%2F1.webp",
@@ -174,7 +177,7 @@ describe("Kiểm thử Route Handlers thực tế (WP-9.1)", () => {
         data: () => ({
           sellerId: "other-user",
           status: "sold", // Đã bán -> 404 cho mọi người
-          passDeadline: "2026-12-01",
+          passDeadline: FUTURE,
         }),
       })
     );
