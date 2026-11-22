@@ -41,3 +41,4 @@ repomix-*.xml
 repomix-output.*
 firestore-debug.log*
 ui-debug.log*
+.env*
