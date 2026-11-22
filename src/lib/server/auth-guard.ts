@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { adminAuth, adminDb, hasAdminCredentials } from "@/lib/firebase/admin";
 import type { DecodedIdToken } from "firebase-admin/auth";
 import { ApiError } from "./http";
 import { hasAdminClaim } from "./claims";
@@ -32,7 +32,8 @@ export async function requireAuth(req: NextRequest): Promise<AuthenticatedUser> 
   const tokenString = match[1];
 
   try {
-    const decoded = await adminAuth.verifyIdToken(tokenString, true);
+    const checkRevoked = hasAdminCredentials;
+    const decoded = await adminAuth.verifyIdToken(tokenString, checkRevoked);
     return {
       token: decoded,
       uid: decoded.uid,
@@ -42,6 +43,22 @@ export async function requireAuth(req: NextRequest): Promise<AuthenticatedUser> 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "";
     console.error("[AUTH_GUARD] verifyIdToken failed:", msg);
+
+    // Nếu lỗi do thiếu Service Account trên Vercel (Could not load default credentials), xác minh chữ ký offline
+    if (msg.includes("default credentials")) {
+      try {
+        const decoded = await adminAuth.verifyIdToken(tokenString, false);
+        return {
+          token: decoded,
+          uid: decoded.uid,
+          email: decoded.email || null,
+          name: decoded.name || null,
+        };
+      } catch {
+        throw new ApiError(503, "ADMIN_SDK_NOT_CONFIGURED", "Máy chủ chưa được nạp Firebase Service Account.");
+      }
+    }
+
     if (msg.includes("revoked") || msg.includes("disabled")) {
       throw new ApiError(401, "SESSION_REVOKED", "Phiên đăng nhập đã bị thu hồi hoặc tài khoản bị vô hiệu hóa.");
     }
