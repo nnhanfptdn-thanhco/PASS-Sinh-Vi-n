@@ -104,19 +104,6 @@ export async function authFetch(
     } catch {
       // Thất bại khi làm mới token
     }
-
-    // Nếu vẫn 401, phiên đăng nhập hoàn toàn vô hiệu
-    if (response.status === 401) {
-      try {
-        await auth.signOut();
-      } catch {
-        // Bỏ qua lỗi signOut
-      }
-      if (typeof window !== "undefined") {
-        const nextUrl = encodeURIComponent(window.location.pathname + window.location.search);
-        window.location.href = `/auth/login?next=${nextUrl}`;
-      }
-    }
   }
 
   return response;

@@ -41,6 +41,7 @@ export async function requireAuth(req: NextRequest): Promise<AuthenticatedUser> 
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "";
+    console.error("[AUTH_GUARD] verifyIdToken failed:", msg);
     if (msg.includes("revoked") || msg.includes("disabled")) {
       throw new ApiError(401, "SESSION_REVOKED", "Phiên đăng nhập đã bị thu hồi hoặc tài khoản bị vô hiệu hóa.");
     }

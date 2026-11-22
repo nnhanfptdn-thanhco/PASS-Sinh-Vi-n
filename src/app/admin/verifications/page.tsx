@@ -64,7 +64,7 @@ function extractApiError(json: unknown, status: number): string {
 }
 
 export default function AdminVerificationsPage() {
-  const { adminClaimMissing } = useAuth();
+  const { user, adminClaimMissing } = useAuth();
   const [items, setItems] = React.useState<VerificationItem[]>([]);
   const [filter, setFilter] = React.useState<AdminFilter>("pending");
   const [isLoading, setIsLoading] = React.useState(true);
@@ -140,6 +140,10 @@ export default function AdminVerificationsPage() {
       }
       setRejectTarget(null);
       setRejectNote("");
+      // Nếu thao tác trên chính tài khoản của admin, làm mới token để nhận claims mới trước khi tải lại danh sách
+      if (user && item.userId === user.uid) {
+        await user.getIdToken(true).catch(() => undefined);
+      }
       await fetchItems(filter); // lấy lại từ server, không cập nhật lạc quan
       if (json?.claimsSynced === false) {
         setActionError(
