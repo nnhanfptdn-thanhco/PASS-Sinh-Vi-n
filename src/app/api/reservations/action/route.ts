@@ -10,6 +10,16 @@ import { NO_SHOW_MIN_WAIT_MINUTES } from "@/lib/constants/listing";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function toMs(v: unknown): number | null {
+  if (typeof v === "string") {
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : null;
+  }
+  if (typeof v === "number") return v;
+  const ts = v as { toMillis?: () => number } | null | undefined;
+  return typeof ts?.toMillis === "function" ? ts.toMillis() : null;
+}
+
 const reservationActionSchema = z
   .object({
     reservationId: z.string().min(1, "Thiếu reservationId"),
@@ -112,6 +122,11 @@ export const POST = withApi(async (req: NextRequest) => {
           "INVALID_STATUS",
           `Yêu cầu giữ chỗ này đang ở trạng thái "${currentResStatus}", không thể xác nhận.`
         );
+      }
+
+      const resExpiresMs = toMs(resData.expiresAt);
+      if (resExpiresMs !== null && resExpiresMs < Date.now()) {
+        throw new ApiError(409, "RESERVATION_EXPIRED", "Yêu cầu giữ chỗ này đã hết hạn.");
       }
 
       // Kiểm tra tin đăng có còn active không
@@ -417,18 +432,22 @@ export const POST = withApi(async (req: NextRequest) => {
         );
       }
 
-      const confirmedAtMs =
-        (resData.confirmedAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0;
-      if (
-        confirmedAtMs &&
-        Date.now() - confirmedAtMs < NO_SHOW_MIN_WAIT_MINUTES * 60_000 &&
-        !isAdmin
-      ) {
-        throw new ApiError(
-          409,
-          "NO_SHOW_TOO_EARLY",
-          `Chỉ được báo vắng mặt sau ${NO_SHOW_MIN_WAIT_MINUTES} phút kể từ khi xác nhận giữ chỗ.`
-        );
+      if (!isAdmin) {
+        const confirmedAtMs = toMs(resData.confirmedAt);
+        if (confirmedAtMs === null) {
+          throw new ApiError(
+            409,
+            "CONFIRMED_AT_MISSING",
+            "Không xác định được thời điểm xác nhận giữ chỗ. Vui lòng liên hệ quản trị viên."
+          );
+        }
+        if (Date.now() - confirmedAtMs < NO_SHOW_MIN_WAIT_MINUTES * 60_000) {
+          throw new ApiError(
+            409,
+            "NO_SHOW_TOO_EARLY",
+            `Chỉ được báo vắng mặt sau ${NO_SHOW_MIN_WAIT_MINUTES} phút kể từ khi xác nhận giữ chỗ.`
+          );
+        }
       }
 
       transaction.update(resRef, {
@@ -519,6 +538,17 @@ export const POST = withApi(async (req: NextRequest) => {
           "INVALID_STATUS",
           "Chỉ có thể hoàn tất giao dịch sau khi người bán đã xác nhận giữ chỗ."
         );
+      }
+
+      if (currentListingStatus !== "reserved") {
+        throw new ApiError(
+          409,
+          "LISTING_NOT_RESERVED",
+          `Tin đăng đang ở trạng thái "${currentListingStatus}" nên không thể hoàn tất giao dịch.`
+        );
+      }
+      if (privateSnap.data()?.confirmedBuyerId !== buyerId) {
+        throw new ApiError(409, "BUYER_MISMATCH", "Người mua đã chốt không khớp với yêu cầu này.");
       }
 
       // Cập nhật giao dịch thành completed

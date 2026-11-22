@@ -49,6 +49,14 @@ export const POST = withApi(async (req: NextRequest) => {
       throw new ApiError(403, "FORBIDDEN", "Bạn không có quyền quản lý tin đăng này.");
     }
 
+    if (!isAdmin && currentStatus === "hidden_by_admin") {
+      throw new ApiError(
+        403,
+        "HIDDEN_BY_ADMIN",
+        "Tin đăng đã bị Quản trị viên ẩn nên bạn không thể tự hiển thị, gia hạn hoặc đánh dấu đã bán. Vui lòng gửi khiếu nại."
+      );
+    }
+
     // 3. Kiểm tra tính hợp lệ của chuyển đổi trạng thái theo Bảng 2.3
     const validation = validateManageListingAction(action as ManageAction, {
       currentStatus,
@@ -95,44 +103,101 @@ export const POST = withApi(async (req: NextRequest) => {
     }
 
     if (action === "hide") {
-      // Đọc các giữ chỗ đang chờ để hủy
-      const pendingResSnap = await transaction.get(
+      const isModeration = isAdmin && sellerId !== callerUid;
+      // Admin kiểm duyệt phải hủy CẢ giữ chỗ đã xác nhận để thu hồi quyền xem địa chỉ
+      const openStatuses = isModeration
+        ? ["pending", "waitlisted", "confirmed"]
+        : ["pending", "waitlisted"];
+
+      // ===== READ PHASE =====
+      const openResSnap = await transaction.get(
         adminDb
           .collection("reservations")
           .where("listingId", "==", listingId)
-          .where("status", "in", ["pending", "waitlisted"])
+          .where("status", "in", openStatuses)
       );
+      const openReportsSnap = isModeration
+        ? await transaction.get(
+            adminDb
+              .collection("reports")
+              .where("targetType", "==", "listing")
+              .where("targetId", "==", listingId)
+              .where("status", "==", "pending")
+          )
+        : null;
 
-      const hideStatus =
-        isAdmin && sellerId !== callerUid ? "hidden_by_admin" : "hidden_by_seller";
-
+      // ===== WRITE PHASE =====
+      const hideStatus = isModeration ? "hidden_by_admin" : "hidden_by_seller";
       transaction.update(listingRef, {
         status: hideStatus,
         updatedAt: FieldValue.serverTimestamp(),
+        ...(isModeration
+          ? { moderatedAt: FieldValue.serverTimestamp(), moderatedBy: callerUid }
+          : {}),
       });
 
-      // Hủy mọi giữ chỗ pending/waitlisted và thông báo cho người mua
-      pendingResSnap.forEach((doc) => {
-        const resData = doc.data();
+      if (isModeration) {
+        // Thu hồi quyền xem địa chỉ chính xác của người mua đã chốt
+        transaction.set(privateRef, { confirmedBuyerId: FieldValue.delete() }, { merge: true });
+      }
+
+      const cancelledBy = isModeration ? "admin" : "seller";
+      const cancelReason = isModeration
+        ? "Tin đăng đã bị Quản trị viên ẩn do có dấu hiệu vi phạm quy định"
+        : "Người bán đã tạm ẩn tin đăng";
+      const buyerBody = isModeration
+        ? "Tin đăng bạn đang giữ chỗ đã bị Quản trị viên ẩn vì có dấu hiệu vi phạm quy định."
+        : "Người bán đã tạm ẩn món đồ bạn đang đặt giữ chỗ.";
+
+      openResSnap.forEach((doc) => {
+        const r = doc.data();
         transaction.update(doc.ref, {
           status: "cancelled",
-          cancelledBy: "seller",
-          cancelReason: "Người bán đã tạm ẩn tin đăng",
+          cancelledBy,
+          cancelReason,
           cancelledAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         });
-
-        const notifRef = adminDb.collection("notifications").doc();
-        transaction.set(notifRef, {
-          userId: resData.buyerId,
+        transaction.set(adminDb.collection("notifications").doc(), {
+          userId: r.buyerId,
           title: "Giữ chỗ đã bị hủy",
-          body: "Người bán đã tạm ẩn món đồ bạn đang đặt giữ chỗ.",
+          body: buyerBody,
           type: "reservation_cancelled",
           targetId: listingId,
           read: false,
           createdAt: FieldValue.serverTimestamp(),
         });
       });
+
+      if (isModeration) {
+        transaction.set(adminDb.collection("notifications").doc(), {
+          userId: sellerId,
+          title: "Tin đăng của bạn đã bị ẩn",
+          body: "Tin đăng đã bị Quản trị viên ẩn vì có dấu hiệu vi phạm. Bạn có thể gửi khiếu nại nếu cho rằng đây là nhầm lẫn.",
+          type: "listing_moderated",
+          targetId: listingId,
+          read: false,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        transaction.set(adminDb.collection("adminLogs").doc(), {
+          adminUid: callerUid,
+          adminEmail: token.email || "admin",
+          action: "HIDE_LISTING_BY_ADMIN",
+          targetListingId: listingId,
+          targetUserId: sellerId,
+          cancelledReservations: openResSnap.size,
+          timestamp: FieldValue.serverTimestamp(),
+        });
+        openReportsSnap?.forEach((doc) => {
+          transaction.update(doc.ref, {
+            status: "resolved",
+            resolution: "listing_hidden_by_admin",
+            resolvedBy: callerUid,
+            resolvedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        });
+      }
 
       return {
         status: hideStatus,
