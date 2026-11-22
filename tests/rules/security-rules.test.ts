@@ -6,7 +6,7 @@ import {
 } from "@firebase/rules-unit-testing";
 import { setupTestEnvironment, getUserContext, getUnauthContext } from "./helpers";
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
-import { ref, uploadBytes, deleteObject, getBytes } from "firebase/storage";
+import { ref, uploadBytes, deleteObject, getBytes, updateMetadata } from "firebase/storage";
 
 describe("Firebase Security Rules (Firestore & Storage)", () => {
   let env: RulesTestEnvironment;
@@ -72,9 +72,9 @@ describe("Firebase Security Rules (Firestore & Storage)", () => {
         uploadBytes(fileRef, smallPayload, { contentType: "image/webp" })
       );
 
-      // Cố gắng update đè lên file đã có
+      // Cố gắng update đè lên file đã có (allow update: if false)
       await assertFails(
-        uploadBytes(fileRef, new Uint8Array([5, 6, 7]), { contentType: "image/webp" })
+        updateMetadata(fileRef, { customMetadata: { updated: "true" } })
       );
     });
 

@@ -9,6 +9,7 @@ import universitiesData from "@/data/universities_vietnam.json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export const POST = withApi(async (req: NextRequest) => {
   // 1. Xác thực tài khoản đăng nhập

@@ -23,6 +23,56 @@ export const GET = withApi(async (request: NextRequest) => {
   try {
     const now = Date.now();
 
+    // 1. Thử lại việc xóa ảnh cho các hồ sơ có cờ cardDeletePending = true (P1-5)
+    const pendingDeleteSnap = await adminDb
+      .collection("verifications")
+      .where("cardDeletePending", "==", true)
+      .limit(50)
+      .get();
+
+    for (const doc of pendingDeleteSnap.docs) {
+      const data = doc.data();
+      const p = typeof data.cardStoragePath === "string" ? data.cardStoragePath : null;
+      if (p && p.startsWith("private/cards/")) {
+        try {
+          await bucket.file(p).delete({ ignoreNotFound: true });
+        } catch {
+          // File có thể đã bị xóa trước đó
+        }
+      }
+      await doc.ref.update({
+        cardDeleted: true,
+        cardStoragePath: null,
+        cardDeletePending: FieldValue.delete(),
+        cardAutoDeletedAt: FieldValue.serverTimestamp(),
+      });
+      purgedCount++;
+    }
+
+    // 2. Dọn dẹp ảnh Data URL quá 30 ngày kể từ khi quyết định (PDP 2025)
+    const oldDecidedSnap = await adminDb
+      .collection("verifications")
+      .where("status", "in", ["approved", "rejected", "expired"])
+      .limit(100)
+      .get();
+
+    for (const doc of oldDecidedSnap.docs) {
+      const data = doc.data();
+      const p = typeof data.cardStoragePath === "string" ? data.cardStoragePath : null;
+      if (p && p.startsWith("data:image/") && !data.cardDeleted) {
+        const decidedAtMs = data.decidedAt?.toMillis?.() ?? (data.updatedAt?.toMillis?.() ?? 0);
+        if (decidedAtMs > 0 && now - decidedAtMs > THIRTY_DAYS_MS) {
+          await doc.ref.update({
+            cardStoragePath: null,
+            cardDeleted: true,
+            cardAutoDeletedAt: FieldValue.serverTimestamp(),
+          });
+          purgedCount++;
+        }
+      }
+    }
+
+    // 3. Quét Storage bucket dọn ảnh quá hạn 30 ngày và ảnh mồ côi > 24 giờ
     for (let page = 0; page < MAX_PAGES; page++) {
       const query: { prefix: string; maxResults: number; pageToken?: string } = {
         prefix: "private/cards/",
@@ -57,6 +107,16 @@ export const GET = withApi(async (request: NextRequest) => {
           }
         } else {
           const vData = verifSnap.data() || {};
+
+          // Nếu hồ sơ không còn trỏ đến file này nữa (file cũ mồ côi sau khi upload lại) > 24h
+          if (vData.cardStoragePath !== file.name) {
+            if (age > ONE_DAY_MS) {
+              await file.delete({ ignoreNotFound: true });
+              orphanPurgedCount++;
+            }
+            continue;
+          }
+
           // CHỈ xóa khi hồ sơ đã quyết định (approved/rejected/expired) và quá 30 ngày từ decidedAt hoặc tạo file
           // TUYỆT ĐỐI không xóa hồ sơ đang pending
           if (["approved", "rejected", "expired"].includes(vData.status)) {

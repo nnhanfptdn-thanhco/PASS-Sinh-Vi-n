@@ -6,6 +6,7 @@ import { adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export const GET = withApi(async (req: NextRequest) => {
   const admin = await requireAdmin(req);
