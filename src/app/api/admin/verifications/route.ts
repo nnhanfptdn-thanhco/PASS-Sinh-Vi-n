@@ -47,15 +47,48 @@ export const GET = withApi(async (req: NextRequest) => {
   const base = adminDb.collection("verifications").where("status", "==", status);
   let docs: QueryDocumentSnapshot<DocumentData>[];
 
-  if (status === "pending") {
-    // Ưu tiên email .edu.vn ĐÚNG NGHĨA: lấy riêng từng nhóm theo thứ tự nộp rồi ghép
-    const [edu, others] = await Promise.all([
-      base.where("isEduEmail", "==", true).orderBy("createdAt", "asc").limit(limit).get(),
-      base.where("isEduEmail", "==", false).orderBy("createdAt", "asc").limit(limit).get(),
-    ]);
-    docs = [...edu.docs, ...others.docs].slice(0, limit);
-  } else {
-    docs = (await base.orderBy("updatedAt", "desc").limit(limit).get()).docs;
+  try {
+    if (status === "pending") {
+      // Ưu tiên email .edu.vn ĐÚNG NGHĨA: lấy riêng từng nhóm theo thứ tự nộp rồi ghép
+      const [edu, others] = await Promise.all([
+        base.where("isEduEmail", "==", true).orderBy("createdAt", "asc").limit(limit).get(),
+        base.where("isEduEmail", "==", false).orderBy("createdAt", "asc").limit(limit).get(),
+      ]);
+      docs = [...edu.docs, ...others.docs].slice(0, limit);
+    } else {
+      docs = (await base.orderBy("updatedAt", "desc").limit(limit).get()).docs;
+    }
+  } catch (err: unknown) {
+    const errStr = String(err);
+    if (errStr.includes("requires an index") || errStr.includes("FAILED_PRECONDITION")) {
+      console.warn("[AdminVerifications] Missing Firestore index, falling back to in-memory sort:", errStr);
+      const snap = await base.limit(100).get();
+      const allDocs = [...snap.docs];
+      if (status === "pending") {
+        allDocs.sort((a, b) => {
+          const dataA = a.data();
+          const dataB = b.data();
+          const isEduA = Boolean(dataA.isEduEmail);
+          const isEduB = Boolean(dataB.isEduEmail);
+          if (isEduA && !isEduB) return -1;
+          if (!isEduA && isEduB) return 1;
+          const timeA = dataA.createdAt?.toMillis?.() ?? 0;
+          const timeB = dataB.createdAt?.toMillis?.() ?? 0;
+          return timeA - timeB;
+        });
+      } else {
+        allDocs.sort((a, b) => {
+          const dataA = a.data();
+          const dataB = b.data();
+          const timeA = dataA.updatedAt?.toMillis?.() ?? dataA.createdAt?.toMillis?.() ?? 0;
+          const timeB = dataB.updatedAt?.toMillis?.() ?? dataB.createdAt?.toMillis?.() ?? 0;
+          return timeB - timeA;
+        });
+      }
+      docs = allDocs.slice(0, limit);
+    } else {
+      throw err;
+    }
   }
 
   const items = docs.map((d) => {
