@@ -28,9 +28,8 @@ service cloud.firestore {
       allow create: if false; // Tạo bởi server API bootstrap
       allow update: if (isOwner(userId)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt'])
-          && request.resource.data.displayName is string
-          && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 60
-          && (request.resource.data.photoURL == null || (request.resource.data.photoURL is string && request.resource.data.photoURL.size() <= 500 && request.resource.data.photoURL.matches('https://.*'))))
+          && (!('displayName' in request.resource.data) || (request.resource.data.displayName is string && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 60))
+          && (!('photoURL' in request.resource.data) || request.resource.data.photoURL == null || (request.resource.data.photoURL is string && request.resource.data.photoURL.size() <= 500 && request.resource.data.photoURL.matches('https://.*'))))
         || isAdmin();
       allow delete: if false; // Xóa qua server API account/delete
     }

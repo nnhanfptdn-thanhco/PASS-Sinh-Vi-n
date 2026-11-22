@@ -3,6 +3,7 @@ import { requireUser, HttpError } from "@/lib/auth/server";
 import { adminAuth, adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /**
  * Helper xóa danh sách DocumentReference theo từng lô <= 400 thao tác (F12)
@@ -28,6 +29,17 @@ export async function POST(req: NextRequest) {
         403,
         "Vì lý do an toàn, vui lòng đăng nhập lại Google trước khi thực hiện xóa vĩnh viễn tài khoản."
       );
+    }
+
+    // 0. Vô hiệu hóa tài khoản và thu hồi tokens ngay lập tức để đảm bảo tính idempotent và chống race-condition
+    try {
+      await adminAuth.updateUser(userId, { disabled: true });
+      await adminAuth.revokeRefreshTokens(userId);
+    } catch (disableErr: unknown) {
+      const errCode = (disableErr as { code?: string })?.code;
+      if (errCode !== "auth/user-not-found") {
+        console.warn("Lỗi khi vô hiệu hóa user trước khi xóa:", disableErr);
+      }
     }
 
     // 1. Chặn xóa nếu còn giao dịch confirmed hoặc tin đang reserved (F12)

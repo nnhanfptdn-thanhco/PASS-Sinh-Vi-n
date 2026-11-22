@@ -194,4 +194,78 @@ describe("Firebase Security Rules (Firestore & Storage)", () => {
       await assertFails(getDoc(doc(dbB, "usersPrivate", "user_a")));
     });
   });
+
+  describe("4. Strict Access Control - Role Escalation, PII & Direct Client Writes", () => {
+    it("User không được tự nâng role, verified, hay studentIdHash trên doc users của chính mình", async () => {
+      await env.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), "users", "user_a"), {
+          displayName: "User A",
+          role: "pending",
+          verified: false,
+        });
+      });
+
+      const ctxA = getUserContext(env, "user_a");
+      const userRefA = doc(ctxA.firestore(), "users", "user_a");
+
+      // Thử tự nâng role lên admin -> FAILS
+      await assertFails(updateDoc(userRefA, { role: "admin" }));
+      // Thử tự set verified: true -> FAILS
+      await assertFails(updateDoc(userRefA, { verified: true }));
+      // Thử chèn studentIdHash -> FAILS
+      await assertFails(updateDoc(userRefA, { studentIdHash: "fake_hash" }));
+      // Cập nhật displayName hợp lệ (2-60 ký tự) -> SUCCEEDS
+      await assertSucceeds(updateDoc(userRefA, { displayName: "User A Updated" }));
+    });
+
+    it("User B không được đọc listingsPrivate của User A khi chưa chốt giữ chỗ", async () => {
+      await env.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), "listingsPrivate", "listing_1"), {
+          sellerId: "user_a",
+          exactAddress: "Số 1 Đại Cồ Việt, Hà Nội",
+          confirmedBuyerId: null,
+        });
+      });
+
+      const ctxB = getUserContext(env, "user_b");
+      const dbB = ctxB.firestore();
+      await assertFails(getDoc(doc(dbB, "listingsPrivate", "listing_1")));
+
+      // Chủ sở hữu đọc được
+      const ctxA = getUserContext(env, "user_a");
+      await assertSucceeds(getDoc(doc(ctxA.firestore(), "listingsPrivate", "listing_1")));
+    });
+
+    it("Client cấm tạo hoặc sửa trực tiếp vào collection listings và reservations", async () => {
+      const ctxA = getUserContext(env, "user_a", { verified: true });
+      const dbA = ctxA.firestore();
+
+      // Cố ghi vào listings từ client -> FAILS
+      await assertFails(
+        setDoc(doc(dbA, "listings", "new_listing"), {
+          title: "Hack tin đăng",
+          price: 1000,
+          sellerId: "user_a",
+          status: "active",
+        })
+      );
+
+      // Cố ghi vào reservations từ client -> FAILS
+      await assertFails(
+        setDoc(doc(dbA, "reservations", "new_res"), {
+          listingId: "listing_1",
+          buyerId: "user_a",
+          status: "confirmed",
+        })
+      );
+    });
+
+    it("User B không được ghi ảnh vào thư mục thẻ SV private/cards/user_a của User A", async () => {
+      const ctxB = getUserContext(env, "user_b");
+      const cardRef = ref(ctxB.storage(), "private/cards/user_a/card_1234.webp");
+      await assertFails(
+        uploadBytes(cardRef, new Uint8Array([1, 2, 3]), { contentType: "image/webp" })
+      );
+    });
+  });
 });
