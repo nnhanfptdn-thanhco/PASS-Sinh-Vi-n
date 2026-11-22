@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { authFetch } from "@/lib/firebase/client";
+import { useAuth } from "@/lib/auth/AuthContext";
 import { RequireAdmin } from "@/components/auth/RequireAdmin";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -63,6 +64,7 @@ function extractApiError(json: unknown, status: number): string {
 }
 
 export default function AdminVerificationsPage() {
+  const { adminClaimMissing } = useAuth();
   const [items, setItems] = React.useState<VerificationItem[]>([]);
   const [filter, setFilter] = React.useState<AdminFilter>("pending");
   const [isLoading, setIsLoading] = React.useState(true);
@@ -239,6 +241,19 @@ export default function AdminVerificationsPage() {
             >
               Đóng
             </button>
+          </div>
+        )}
+
+        {/* Cảnh báo thiếu custom claim admin trên máy chủ */}
+        {adminClaimMissing && (
+          <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-3 text-sm text-amber-900 dark:bg-amber-950/50 dark:border-amber-700 dark:text-amber-200">
+            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Cảnh báo phân quyền Quản trị viên</p>
+              <p className="text-xs mt-0.5">
+                Tài khoản được nhận diện là admin ở giao diện nhưng máy chủ chưa cấp quyền (thiếu custom claim admin). Các thao tác duyệt hoặc xem ảnh thẻ sẽ bị máy chủ từ chối (HTTP 403). Hãy đăng xuất rồi đăng nhập lại để làm mới quyền.
+              </p>
+            </div>
           </div>
         )}
 

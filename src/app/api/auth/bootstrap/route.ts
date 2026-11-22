@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/server/auth-guard";
 import { withApi } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { adminAuth, adminDb, FieldValue, hasAdminCredentials } from "@/lib/firebase/admin";
+import { setVerifiedClaim } from "@/lib/server/claims";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -153,6 +154,28 @@ export const POST = withApi(async (req: NextRequest) => {
         grantedAt: FieldValue.serverTimestamp(),
         reason: "Configured in ADMIN_EMAILS environment variable",
       });
+    }
+
+    // 3. Claims Reconciliation: Đồng bộ trạng thái xác minh sinh viên với Firestore
+    const verifDocRef = adminDb.collection("verifications").doc(uid);
+    const verifSnap = await verifDocRef.get();
+    if (verifSnap.exists) {
+      const vData = verifSnap.data()!;
+      const isApproved = vData.status === "approved";
+      const hasVerifiedClaim = token.verified === true;
+
+      if (isApproved && (!hasVerifiedClaim || vData.claimsSyncPending)) {
+        const synced = await setVerifiedClaim(uid, true);
+        if (synced) {
+          await verifDocRef.update({ claimsSyncPending: FieldValue.delete() }).catch(() => undefined);
+          claimsChanged = true;
+        }
+      } else if (!isApproved && (vData.status === "rejected" || vData.status === "expired") && hasVerifiedClaim) {
+        const synced = await setVerifiedClaim(uid, false);
+        if (synced) {
+          claimsChanged = true;
+        }
+      }
     }
 
     return NextResponse.json({

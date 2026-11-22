@@ -17,6 +17,26 @@ import { getFirebaseAuthErrorMessage } from "@/lib/auth/errors";
 
 export type UserRole = "guest" | "pending" | "verified" | "admin";
 
+// Chỉ để HIỂN THỊ UI. Quyền thật luôn do máy chủ kiểm bằng custom claim.
+const CLIENT_ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "nnhanfptdn@gmail.com")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+
+export function deriveRole(
+  claims: Record<string, unknown>,
+  email: string | null,
+  emailVerified: boolean
+) {
+  const claimAdmin = claims.admin === true || claims.role === "admin";
+  const emailAdmin =
+    emailVerified && !!email && CLIENT_ADMIN_EMAILS.includes(email.toLowerCase());
+  const isAdmin = claimAdmin || emailAdmin;
+  const isVerified = claims.verified === true || claims.role === "verified" || isAdmin;
+  const role: UserRole = isAdmin ? "admin" : isVerified ? "verified" : "pending";
+  return { isAdmin, isVerified, role, adminClaimMissing: emailAdmin && !claimAdmin };
+}
+
 export interface UserProfileData {
   uid: string;
   displayName: string;
@@ -38,6 +58,7 @@ interface AuthContextType {
   user: User | null;
   profile: UserProfileData | null;
   role: UserRole;
+  adminClaimMissing: boolean;
   isLoading: boolean;
   isSigningIn: boolean;
   isWebView: boolean;
@@ -53,6 +74,7 @@ const AuthContext = React.createContext<AuthContextType>({
   user: null,
   profile: null,
   role: "guest",
+  adminClaimMissing: false,
   isLoading: true,
   isSigningIn: false,
   isWebView: false,
@@ -68,10 +90,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<User | null>(null);
   const [profile, setProfile] = React.useState<UserProfileData | null>(null);
   const [role, setRole] = React.useState<UserRole>("guest");
+  const [adminClaimMissing, setAdminClaimMissing] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSigningIn, setIsSigningIn] = React.useState(false);
   const [isWebView, setIsWebView] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+
+  const refreshClaims = React.useCallback(async () => {
+    const u = auth.currentUser;
+    if (!u) return;
+    try {
+      const tokenResult = await u.getIdTokenResult(true);
+      const d = deriveRole(tokenResult.claims as Record<string, unknown>, u.email, u.emailVerified);
+      setRole(d.role);
+      setAdminClaimMissing(d.adminClaimMissing);
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              verified: d.isVerified || prev.verificationStatus === "approved",
+              isAdmin: d.isAdmin,
+              verificationStatus: d.isVerified ? "approved" : prev.verificationStatus,
+            }
+          : null
+      );
+    } catch {
+      // Giữ nguyên role hiện tại — KHÔNG hạ cấp khi lỗi mạng
+    }
+  }, []);
 
   React.useEffect(() => {
     setIsWebView(isEmbeddedWebView());
@@ -93,8 +139,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     let unsubUserDoc: Unsubscribe | null = null;
     let unsubVerificationDoc: Unsubscribe | null = null;
+    let authSeq = 0;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      const seq = ++authSeq;
+
       // Dọn dẹp listeners cũ nếu đổi user
       if (unsubUserDoc) {
         unsubUserDoc();
@@ -110,6 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!currentUser) {
         setProfile(null);
         setRole("guest");
+        setAdminClaimMissing(false);
         setIsLoading(false);
         return;
       }
@@ -117,19 +167,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         // 1. Lấy Claims từ ID Token hiện tại NGAY LẬP TỨC (từ memory cache, mất 0ms)
         const tokenResult: IdTokenResult = await currentUser.getIdTokenResult();
-        const emailLower = (currentUser.email || "").toLowerCase();
-        const isEmailAdmin = emailLower === "nnhanfptdn@gmail.com" || emailLower === "admin@chopass.vn";
-        const isAdmin = Boolean(
-          tokenResult.claims.admin === true || tokenResult.claims.role === "admin" || isEmailAdmin
-        );
-        const isVerified = Boolean(
-          tokenResult.claims.verified === true || tokenResult.claims.role === "verified" || isAdmin
-        );
+        if (seq !== authSeq) return;
 
-        let currentRole: UserRole = "pending";
-        if (isAdmin) currentRole = "admin";
-        else if (isVerified) currentRole = "verified";
-        setRole(currentRole);
+        const d = deriveRole(
+          tokenResult.claims as Record<string, unknown>,
+          currentUser.email,
+          currentUser.emailVerified
+        );
+        setRole(d.role);
+        setAdminClaimMissing(d.adminClaimMissing);
 
         // Khởi tạo profile sơ bộ từ token ngay lập tức (không đọc localStorage giả mạo)
         setProfile({
@@ -137,9 +183,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           displayName: currentUser.displayName || "Sinh viên",
           email: currentUser.email,
           photoURL: currentUser.photoURL,
-          verified: isVerified,
-          isAdmin,
-          verificationStatus: isVerified ? "approved" : "none",
+          verified: d.isVerified,
+          isAdmin: d.isAdmin,
+          verificationStatus: d.isVerified ? "approved" : "none",
         });
 
         // Bỏ cờ isLoading NGAY LẬP TỨC để toàn bộ giao diện phản hồi 60 FPS, không bị đơ/lag
@@ -154,6 +200,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               const data = await res.json().catch(() => ({}));
               if (data?.claimsChanged) {
                 await currentUser.getIdToken(true);
+                await refreshClaims();
               }
             }
           })
@@ -162,10 +209,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 3. Đăng ký Snapshot Firestore đọc users/{uid} và verifications/{uid} thời gian thực
         let userDocData: Record<string, unknown> = {};
         let verificationStatus: "none" | "pending" | "approved" | "rejected" | "expired" =
-          isVerified ? "approved" : "none";
+          d.isVerified ? "approved" : "none";
 
         const updateCombinedProfile = () => {
-          const isAppApproved = verificationStatus === "approved" || isVerified;
+          if (seq !== authSeq) return;
+          const isAppApproved =
+            d.isAdmin || (verificationStatus === "none" ? d.isVerified : verificationStatus === "approved");
+
           setProfile((prev) => ({
             uid: currentUser.uid,
             displayName:
@@ -182,12 +232,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             provinceCode: (userDocData.provinceCode as string) || prev?.provinceCode,
             wardCode: (userDocData.wardCode as string) || prev?.wardCode,
             verified: isAppApproved,
-            isAdmin,
+            isAdmin: d.isAdmin,
             isGraduating: (userDocData.isGraduating as boolean) ?? prev?.isGraduating,
             verificationStatus:
               verificationStatus !== "none"
                 ? verificationStatus
-                : isVerified
+                : d.isVerified
                 ? "approved"
                 : "none",
           }));
@@ -197,6 +247,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         unsubUserDoc = onSnapshot(
           userDocRef,
           (docSnap) => {
+            if (seq !== authSeq) return;
             if (docSnap.exists()) {
               userDocData = docSnap.data();
               updateCombinedProfile();
@@ -204,7 +255,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setIsLoading(false);
           },
           () => {
-            setIsLoading(false);
+            if (seq === authSeq) setIsLoading(false);
           }
         );
 
@@ -212,34 +263,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         unsubVerificationDoc = onSnapshot(
           verificationDocRef,
           async (verifSnap) => {
+            if (seq !== authSeq) return;
             if (verifSnap.exists()) {
               const vData = verifSnap.data();
               verificationStatus = (vData.status as typeof verificationStatus) || "pending";
 
               // Nếu hồ sơ đã duyệt mà claim chưa có verified, tự động làm mới token
-              if (verificationStatus === "approved" && !isVerified) {
+              if (verificationStatus === "approved" && !d.isVerified) {
                 try {
                   const refreshedToken = await currentUser.getIdTokenResult(true);
-                  if (refreshedToken.claims.verified) {
-                    setRole(refreshedToken.claims.admin ? "admin" : "verified");
-                  }
+                  if (seq !== authSeq) return;
+                  const refreshedD = deriveRole(
+                    refreshedToken.claims as Record<string, unknown>,
+                    currentUser.email,
+                    currentUser.emailVerified
+                  );
+                  setRole(refreshedD.role);
+                  setAdminClaimMissing(refreshedD.adminClaimMissing);
                 } catch {
                   // Bỏ qua lỗi làm mới token
                 }
               }
             } else {
-              verificationStatus = isVerified ? "approved" : "none";
+              verificationStatus = d.isVerified ? "approved" : "none";
             }
             updateCombinedProfile();
           },
           () => {
-            // Người dùng chưa có hồ sơ xác minh
-            verificationStatus = isVerified ? "approved" : "none";
+            if (seq !== authSeq) return;
+            verificationStatus = d.isVerified ? "approved" : "none";
             updateCombinedProfile();
           }
         );
       } catch {
-        setRole("pending");
+        const fallbackD = deriveRole({}, currentUser.email, currentUser.emailVerified);
+        setRole(fallbackD.role);
+        setAdminClaimMissing(fallbackD.adminClaimMissing);
         setIsLoading(false);
       }
     });
@@ -249,36 +308,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (unsubUserDoc) unsubUserDoc();
       if (unsubVerificationDoc) unsubVerificationDoc();
     };
-  }, []);
-
-  const refreshClaims = async () => {
-    if (!auth.currentUser) return;
-    try {
-      const tokenResult = await auth.currentUser.getIdTokenResult(true);
-      const isAdmin = Boolean(tokenResult.claims.admin || tokenResult.claims.role === "admin");
-      const isVerified = Boolean(
-        tokenResult.claims.verified || tokenResult.claims.role === "verified"
-      );
-
-      let currentRole: UserRole = "pending";
-      if (isAdmin) currentRole = "admin";
-      else if (isVerified) currentRole = "verified";
-
-      setRole(currentRole);
-      setProfile((prev) =>
-        prev
-          ? {
-              ...prev,
-              verified: isVerified,
-              isAdmin,
-              verificationStatus: isVerified ? "approved" : prev.verificationStatus,
-            }
-          : null
-      );
-    } catch {
-      // Bỏ qua lỗi làm mới token
-    }
-  };
+  }, [refreshClaims]);
 
   const getIdToken = async (): Promise<string | undefined> => {
     if (!auth.currentUser) return undefined;
@@ -355,6 +385,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         profile,
         role,
+        adminClaimMissing,
         isLoading,
         isSigningIn,
         isWebView,
