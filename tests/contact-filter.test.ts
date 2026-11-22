@@ -28,6 +28,15 @@ describe("Contact Info Filter (WP-0.3 / Section 3.9)", () => {
     expect(containsContactInfo("fb.com/abc")).toBe(true);
     // Email
     expect(containsContactInfo("abc@gmail.com")).toBe(true);
+
+    // Ký tự ẩn Zero-width spaces (U+200B)
+    expect(containsContactInfo("0\u200B9\u200B1\u200B2\u200B3\u200B4\u200B5\u200B6\u200B7\u200B8")).toBe(true);
+    // Ký tự Cyrillic homoglyph (chữ 'о' U+043E thay vì 'o' Latin)
+    expect(containsContactInfo("\u043E912345678")).toBe(true);
+    // Chữ số tiếng Anh
+    expect(containsContactInfo("zero nine one two three four five six seven eight")).toBe(true);
+    // Keycap emojis
+    expect(containsContactInfo("0️⃣9️⃣1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣8️⃣")).toBe(true);
   });
 
   it("BẮT BUỘC KHÔNG ĐƯỢC CHẶN các thông tin sản phẩm, mã, giá, thông số kỹ thuật", () => {

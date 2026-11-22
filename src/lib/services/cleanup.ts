@@ -170,16 +170,34 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
 
   // --- 2. HẾT HẠN CÁC TIN ĐĂNG ACTIVE QUÁ HẠN PASS (Asia/Ho_Chi_Minh) ---
   try {
-    const overdueListingsSnap = await adminDb
-      .collection("listings")
-      .where("status", "==", "active")
-      .where("passDeadline", "<", currentToday)
-      .limit(1000)
-      .get();
+    let docs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] = [];
+    try {
+      const overdueListingsSnap = await adminDb
+        .collection("listings")
+        .where("status", "==", "active")
+        .where("passDeadline", "<", currentToday)
+        .limit(1000)
+        .get();
+      docs = overdueListingsSnap.docs;
+    } catch (idxErr: unknown) {
+      const errStr = String(idxErr);
+      if (errStr.includes("requires an index") || errStr.includes("FAILED_PRECONDITION")) {
+        const snap = await adminDb
+          .collection("listings")
+          .where("status", "==", "active")
+          .limit(1000)
+          .get();
+        docs = snap.docs.filter((d) => {
+          const dl = (d.data().passDeadline as string) || "";
+          return dl && dl < currentToday;
+        });
+      } else {
+        throw idxErr;
+      }
+    }
 
     // Mỗi doc có 2 ghi (update tin + insert notification) => BATCH_SIZE = 200 đảm bảo 400 <= 500 thao tác
     const BATCH_SIZE = 200;
-    const docs = overdueListingsSnap.docs;
 
     for (let i = 0; i < docs.length; i += BATCH_SIZE) {
       const chunk = docs.slice(i, i + BATCH_SIZE);
@@ -216,14 +234,33 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
 
   // --- 3. HẾT HẠN GIỮ CHỖ PENDING QUÁ 24 GIỜ VÀ NÂNG WAITLIST ---
   try {
-    const expiredPendingSnap = await adminDb
-      .collection("reservations")
-      .where("status", "==", "pending")
-      .where("expiresAt", "<=", nowIso)
-      .limit(200)
-      .get();
+    let pendingDocs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] = [];
+    try {
+      const expiredPendingSnap = await adminDb
+        .collection("reservations")
+        .where("status", "==", "pending")
+        .where("expiresAt", "<=", nowIso)
+        .limit(200)
+        .get();
+      pendingDocs = expiredPendingSnap.docs;
+    } catch (idxErr: unknown) {
+      const errStr = String(idxErr);
+      if (errStr.includes("requires an index") || errStr.includes("FAILED_PRECONDITION")) {
+        const snap = await adminDb
+          .collection("reservations")
+          .where("status", "==", "pending")
+          .limit(200)
+          .get();
+        pendingDocs = snap.docs.filter((d) => {
+          const exp = (d.data().expiresAt as string) || "";
+          return exp && exp <= nowIso;
+        });
+      } else {
+        throw idxErr;
+      }
+    }
 
-    for (const doc of expiredPendingSnap.docs) {
+    for (const doc of pendingDocs) {
       try {
         const success = await expireReservationTx(doc.id, "pending", now);
         if (success) expiredPendingReservationsCount++;
@@ -237,14 +274,33 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
 
   // --- 4. HẾT HẠN GIỮ CHỖ CONFIRMED QUÁ 72 GIỜ CHƯA HOÀN TẤT ---
   try {
-    const expiredConfirmedSnap = await adminDb
-      .collection("reservations")
-      .where("status", "==", "confirmed")
-      .where("holdExpiresAt", "<=", nowIso)
-      .limit(200)
-      .get();
+    let confirmedDocs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] = [];
+    try {
+      const expiredConfirmedSnap = await adminDb
+        .collection("reservations")
+        .where("status", "==", "confirmed")
+        .where("holdExpiresAt", "<=", nowIso)
+        .limit(200)
+        .get();
+      confirmedDocs = expiredConfirmedSnap.docs;
+    } catch (idxErr: unknown) {
+      const errStr = String(idxErr);
+      if (errStr.includes("requires an index") || errStr.includes("FAILED_PRECONDITION")) {
+        const snap = await adminDb
+          .collection("reservations")
+          .where("status", "==", "confirmed")
+          .limit(200)
+          .get();
+        confirmedDocs = snap.docs.filter((d) => {
+          const holdExp = (d.data().holdExpiresAt as string) || "";
+          return holdExp && holdExp <= nowIso;
+        });
+      } else {
+        throw idxErr;
+      }
+    }
 
-    for (const doc of expiredConfirmedSnap.docs) {
+    for (const doc of confirmedDocs) {
       try {
         const success = await expireReservationTx(doc.id, "confirmed", now);
         if (success) expiredConfirmedReservationsCount++;

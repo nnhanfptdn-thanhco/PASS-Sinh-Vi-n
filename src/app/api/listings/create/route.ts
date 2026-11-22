@@ -74,6 +74,16 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
+  // Chặn tách số điện thoại xuyên trường (ví dụ: nửa số ở tiêu đề, nửa số ở mô tả)
+  const combinedPublicText = publicTextFields.filter(Boolean).join(" ");
+  if (containsContactInfo(combinedPublicText)) {
+    throw new ApiError(
+      400,
+      "CONTACT_INFO_IN_PUBLIC_TEXT",
+      "Phát hiện thông tin liên hệ được chia nhỏ giữa các trường thông tin. Vui lòng xóa trước khi đăng."
+    );
+  }
+
   // 6. Kiểm tra tính hợp lệ của ảnh (chỉ nhận URL Storage của chính người bán)
   const BUCKET =
     process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||

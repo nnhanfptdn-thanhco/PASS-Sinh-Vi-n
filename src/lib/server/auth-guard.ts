@@ -105,8 +105,13 @@ export async function requireVerified(req: NextRequest): Promise<VerifiedUser> {
 
 /**
  * Yêu cầu quyền Quản trị viên (Admin)
+ * Bảo mật Fail-Closed: Bắt buộc Service Account phải sẵn sàng để kiểm tra checkRevoked trực tiếp
  */
 export async function requireAdmin(req: NextRequest): Promise<AuthenticatedUser> {
+  if (!hasAdminCredentials) {
+    throw new ApiError(503, "ADMIN_SDK_NOT_CONFIGURED", "Máy chủ chưa được nạp Firebase Service Account để xác thực quản trị viên.");
+  }
+
   const auth = await requireAuth(req);
 
   if (!hasAdminClaim(auth.token)) {

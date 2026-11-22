@@ -24,28 +24,44 @@ const PRIVATE_CONTACT_INTENT_REGEX =
 
 const ZALO_HANDLE_REGEX = /\bz[\s._-]*a[\s._-]*l[\s._-]*o\s*:\s*[a-zA-Z0-9_.-]+/i;
 
-// Bảng ánh xạ số tiếng Việt thành chữ số
-const VN_WORD_DIGITS: Record<string, string> = {
-  "không": "0", "khong": "0",
-  "một": "1", "mot": "1",
-  "hai": "2",
-  "ba": "3",
-  "bốn": "4", "bon": "4", "tư": "4", "tu": "4",
-  "năm": "5", "nam": "5",
-  "sáu": "6", "sau": "6",
-  "bảy": "7", "bay": "7",
-  "tám": "8", "tam": "8",
-  "chín": "9", "chin": "9",
+// Bảng ánh xạ số tiếng Việt và tiếng Anh thành chữ số
+const WORD_DIGITS: Record<string, string> = {
+  "không": "0", "khong": "0", "zero": "0",
+  "một": "1", "mot": "1", "one": "1",
+  "hai": "2", "two": "2",
+  "ba": "3", "three": "3",
+  "bốn": "4", "bon": "4", "tư": "4", "tu": "4", "four": "4",
+  "năm": "5", "nam": "5", "five": "5",
+  "sáu": "6", "sau": "6", "six": "6",
+  "bảy": "7", "bay": "7", "seven": "7",
+  "tám": "8", "tam": "8", "eight": "8",
+  "chín": "9", "chin": "9", "nine": "9",
 };
 
-/** Chuyển đổi các chữ số tiếng Việt đọc bằng chữ sang dạng số để kiểm tra */
+// Ánh xạ ký tự Cyrillic homoglyph sang Latin để chống lách kiểm duyệt
+const CYRILLIC_HOMOGLYPHS: Record<string, string> = {
+  "\u0430": "a", "\u0410": "A",
+  "\u0432": "b", "\u0412": "B",
+  "\u0435": "e", "\u0415": "E",
+  "\u043A": "k", "\u041A": "K",
+  "\u043C": "m", "\u041C": "M",
+  "\u043D": "h", "\u041D": "H",
+  "\u043E": "o", "\u041E": "O",
+  "\u0440": "p", "\u0420": "P",
+  "\u0441": "c", "\u0421": "C",
+  "\u0442": "t", "\u0422": "T",
+  "\u0443": "y", "\u0423": "Y",
+  "\u0445": "x", "\u0425": "X",
+};
+
+/** Chuyển đổi các chữ số đọc bằng chữ (Việt & Anh) sang dạng số */
 function normalizeWordDigits(text: string): string {
   const words = text.split(/[\s,.-]+/);
   let converted = "";
   for (const w of words) {
     const lower = w.toLowerCase();
-    if (VN_WORD_DIGITS[lower] !== undefined) {
-      converted += VN_WORD_DIGITS[lower];
+    if (WORD_DIGITS[lower] !== undefined) {
+      converted += WORD_DIGITS[lower];
     } else {
       converted += " ";
     }
@@ -61,8 +77,17 @@ export function containsContactInfo(text: string | null | undefined): boolean {
     return false;
   }
 
-  // Chuẩn hóa Unicode NFKC (đưa số full-width ０-９ về 0-9)
-  let normalized = text.normalize("NFKC").toLowerCase().trim();
+  // 1. Loại bỏ các ký tự ẩn / zero-width spaces (U+200B, U+200C, U+200D, U+FEFF, v.v.)
+  let sanitized = text.replace(/[\u200B-\u200D\uFEFF\u00AD\u2060]/g, "");
+
+  // 2. Chuyển đổi keycap emojis (0️⃣, 1️⃣, ..., 9️⃣) về chữ số
+  sanitized = sanitized.replace(/([0-9])(?:\uFE0F)?\u20E3/g, "$1");
+
+  // 3. Chuẩn hóa Cyrillic homoglyphs sang Latin
+  sanitized = sanitized.replace(/[\u0410-\u044F]/g, (ch) => CYRILLIC_HOMOGLYPHS[ch] || ch);
+
+  // 4. Chuẩn hóa Unicode NFKC (đưa số full-width ０-９ về 0-9)
+  let normalized = sanitized.normalize("NFKC").toLowerCase().trim();
   if (!normalized) return false;
 
   // 1. Kiểm tra Email
