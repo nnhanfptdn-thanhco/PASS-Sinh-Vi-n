@@ -65,25 +65,48 @@ export async function compressAndAnalyzeImage(
         const imgData = ctx.getImageData(0, 0, width, height);
         const qualityCheck = analyzeImagePixels(imgData);
 
-        // Xuất ra WebP
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              reject(new Error("Lỗi khi xuất Blob từ canvas"));
-              return;
-            }
-            const dataUrl = canvas.toDataURL("image/webp", quality);
-            resolve({
-              blob,
-              dataUrl,
-              width,
-              height,
-              quality: qualityCheck,
-            });
-          },
-          "image/webp",
-          quality
-        );
+        // Xuất ra WebP, fallback JPEG nếu Safari trả PNG
+        const exportWithFallback = (targetMime: "image/webp" | "image/jpeg", q: number) => {
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                reject(new Error("Lỗi khi xuất Blob từ canvas"));
+                return;
+              }
+              // Safari trả image/png khi không hỗ trợ encode WebP -> chuyển sang JPEG
+              if (targetMime === "image/webp" && blob.type !== "image/webp") {
+                exportWithFallback("image/jpeg", q);
+                return;
+              }
+              const mime = blob.type === "image/jpeg" ? "image/jpeg" : "image/webp";
+              let currentQ = q;
+              let dataUrl = canvas.toDataURL(mime, currentQ);
+
+              // Giảm chất lượng nếu kích thước Data URL vượt ngưỡng 480KB (P1-11)
+              const MAX_DATA_URL_CHARS = 480 * 1024;
+              if (dataUrl.length > MAX_DATA_URL_CHARS && currentQ > 0.5) {
+                currentQ = 0.6;
+                dataUrl = canvas.toDataURL(mime, currentQ);
+                if (dataUrl.length > MAX_DATA_URL_CHARS) {
+                  currentQ = 0.5;
+                  dataUrl = canvas.toDataURL(mime, currentQ);
+                }
+              }
+
+              resolve({
+                blob,
+                dataUrl,
+                width,
+                height,
+                quality: qualityCheck,
+              });
+            },
+            targetMime,
+            q
+          );
+        };
+
+        exportWithFallback("image/webp", quality);
       };
       img.onerror = () => reject(new Error("Không thể đọc định dạng ảnh"));
       img.src = e.target?.result as string;

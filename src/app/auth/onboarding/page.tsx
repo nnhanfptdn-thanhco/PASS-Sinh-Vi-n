@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { storage, authFetch } from "@/lib/firebase/client";
-import { ref, uploadBytes } from "firebase/storage";
+import { ref, uploadBytesResumable } from "firebase/storage";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -26,9 +26,49 @@ import universitiesData from "../../../../data/universities_vietnam.json";
 import provincesData from "../../../../data/provinces_34.json";
 import wardsData from "../../../../data/communes_wards.json";
 
+const UPLOAD_TIMEOUT_MS = 12_000;
+const API_TIMEOUT_MS = 20_000;
+const MAX_DATA_URL_CHARS = 480 * 1024; // server giới hạn 500 * 1024 ký tự
+
+function extractApiError(json: unknown, status: number): string {
+  const j = json as { error?: unknown; message?: unknown } | null;
+  if (typeof j?.error === "string") return j.error;
+  const nested = j?.error as { message?: unknown } | undefined;
+  if (typeof nested?.message === "string") return nested.message;
+  if (typeof j?.message === "string") return j.message;
+  return `Máy chủ từ chối hồ sơ (HTTP ${status}). Vui lòng thử lại.`;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onloadend = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+/** Upload có timeout THỰC SỰ: hết giờ thì hủy task, không để file mồ côi chạy ngầm. */
+function uploadWithTimeout(path: string, blob: Blob, contentType: string, ms: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const task = uploadBytesResumable(ref(storage, path), blob, { contentType });
+    const timer = setTimeout(() => {
+      task.cancel();
+      reject(new Error("STORAGE_TIMEOUT"));
+    }, ms);
+    task.on(
+      "state_changed",
+      undefined,
+      (err) => { clearTimeout(timer); reject(err); },
+      () => { clearTimeout(timer); resolve(); }
+    );
+  });
+}
+
 function OnboardingContent() {
   const router = useRouter();
   const { user } = useAuth();
+  const submitLock = React.useRef(false);
 
   const [step, setStep] = React.useState<1 | 2 | 3>(1);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -107,80 +147,91 @@ function OnboardingContent() {
     if (!file) return;
 
     try {
+      setSubmitError(null);
       const result = await compressAndAnalyzeImage(file, 800, 0.75);
       setCardImagePreview(result.dataUrl);
       setCardImageBlob(result.blob);
       setQualityCheck(result.quality);
     } catch (err) {
       console.error("Lỗi nén ảnh thẻ:", err);
-      alert("Không thể đọc tệp ảnh. Vui lòng chọn ảnh định dạng JPG/PNG hợp lệ.");
+      setSubmitError("Không thể đọc tệp ảnh. Vui lòng chọn ảnh định dạng JPG/PNG hợp lệ.");
     }
   };
 
   const handleSubmitVerification = async () => {
+    if (submitLock.current) return;
     setSubmitError(null);
     if (!user) {
       setSubmitError("Vui lòng đăng nhập trước khi gửi hồ sơ xác minh.");
       return;
     }
-    if (!cardImageBlob || !formData.studentId || !formData.zaloPhone) {
+    if (!cardImageBlob || !formData.studentId.trim() || !formData.zaloPhone.trim()) {
       setSubmitError("Vui lòng điền đầy đủ các mục bắt buộc và tải ảnh thẻ.");
       return;
     }
+    const mime =
+      cardImageBlob.type === "image/jpeg" ? "image/jpeg" :
+      cardImageBlob.type === "image/webp" ? "image/webp" : null;
+    if (!mime) {
+      setSubmitError("Ảnh thẻ phải là JPEG hoặc WebP. Vui lòng chọn lại ảnh.");
+      return;
+    }
 
+    submitLock.current = true;
     setIsSubmitting(true);
     try {
-      // 1. Thử upload ảnh thẻ lên Firebase Storage riêng tư (timeout 8s để không bao giờ treo giao diện)
-      const ext = cardImageBlob.type === "image/jpeg" ? "jpg" : "webp";
-      const fileId = crypto.randomUUID().replace(/-/g, "").slice(0, 24); // khớp regex [A-Za-z0-9_-]{4,64}
+      const ext = mime === "image/jpeg" ? "jpg" : "webp";
+      const fileId = crypto.randomUUID().replace(/-/g, "").slice(0, 24); // khớp [A-Za-z0-9_-]{4,64}
       const storagePath = `private/cards/${user.uid}/${fileId}.${ext}`;
 
-      let finalPath = storagePath;
+      let cardStoragePath = storagePath;
       try {
-        const uploadTask = uploadBytes(ref(storage, storagePath), cardImageBlob, {
-          contentType: cardImageBlob.type === "image/jpeg" ? "image/jpeg" : "image/webp",
-        });
-        const timeoutTask = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("STORAGE_TIMEOUT")), 6000)
-        );
-        await Promise.race([uploadTask, timeoutTask]);
+        await uploadWithTimeout(storagePath, cardImageBlob, mime, UPLOAD_TIMEOUT_MS);
       } catch (storageErr) {
-        console.warn("Upload Storage quá 6s hoặc chưa kích hoạt bucket, chuyển sang cơ chế dự phòng an toàn:", storageErr);
-        // Fallback: Chuyển ảnh thẻ sang Base64 WebP nhẹ gửi trực tiếp lên server
-        const reader = new FileReader();
-        finalPath = await new Promise<string>((resolve, reject) => {
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(cardImageBlob);
-        });
+        console.warn("Upload Storage thất bại/quá hạn, dùng cơ chế dự phòng:", storageErr);
+        const dataUrl = await blobToDataUrl(cardImageBlob);
+        if (dataUrl.length > MAX_DATA_URL_CHARS) {
+          throw new Error(
+            "Mạng đang yếu và ảnh thẻ quá nặng để gửi dự phòng. Hãy kết nối mạng ổn định hơn rồi thử lại."
+          );
+        }
+        cardStoragePath = dataUrl;
       }
 
-      // 2. Gửi metadata tới server route
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+      let res: Response;
       try {
-        const res = await authFetch("/api/verifications/submit", {
+        res = await authFetch("/api/verifications/submit", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...formData,
-            cardStoragePath: finalPath,
-          }),
+          body: JSON.stringify({ ...formData, cardStoragePath }),
+          signal: controller.signal,
         });
-
-        if (!res.ok) {
-          const errJson = await res.json().catch(() => ({}));
-          console.warn("Máy chủ phản hồi mã", res.status, errJson);
-        }
-      } catch (submitErr) {
-        console.warn("Lỗi gửi hồ sơ tới máy chủ:", submitErr);
+      } finally {
+        clearTimeout(timer);
       }
 
-      // 3. Hoàn tất thành công và hiển thị thông báo
-      setSuccessMessage(true);
-    } catch (error: unknown) {
-      console.warn("Lỗi trong quá trình nộp hồ sơ:", error);
-      setSuccessMessage(true);
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        const code = (json as { code?: string; error?: { code?: string } } | null)?.code
+          ?? (json as { error?: { code?: string } } | null)?.error?.code;
+        if (code === "VERIFICATION_PENDING") { setSuccessMessage(true); return; } // đã có hồ sơ đang chờ
+        throw new Error(extractApiError(json, res.status));
+      }
+      setSuccessMessage(true); // CHỈ khi server trả 2xx
+    } catch (err) {
+      const aborted = err instanceof DOMException && err.name === "AbortError";
+      setSubmitError(
+        aborted
+          ? "Máy chủ phản hồi quá lâu. Hồ sơ CHƯA được gửi, vui lòng thử lại."
+          : err instanceof Error && err.message
+          ? err.message
+          : "Không gửi được hồ sơ. Vui lòng kiểm tra mạng và thử lại."
+      );
     } finally {
-      setIsSubmitting(false);
+      submitLock.current = false;
+      setIsSubmitting(false); // luôn tắt loading trong mọi nhánh
     }
   };
 

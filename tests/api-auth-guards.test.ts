@@ -7,7 +7,7 @@ import {
   HttpError,
   errorResponse,
 } from "../src/lib/auth/server";
-import { adminAuth } from "../src/lib/firebase/admin";
+import { adminAuth, adminDb } from "../src/lib/firebase/admin";
 
 describe("Kiểm tra Server Auth Guards (src/lib/auth/server.ts)", () => {
   it("Không có header Authorization -> quăng lỗi HttpError 401", async () => {
@@ -37,12 +37,18 @@ describe("Kiểm tra Server Auth Guards (src/lib/auth/server.ts)", () => {
     await expect(requireUser(req)).rejects.toMatchObject({ status: 401 });
   });
 
-  it("requireVerified: Chặn tài khoản chưa xác minh thẻ SV (verified: false) -> 403", async () => {
+  it("requireVerified: Chặn tài khoản chưa xác minh thẻ SV (Firestore chưa approved) -> 403", async () => {
     vi.spyOn(adminAuth, "verifyIdToken").mockResolvedValue({
       uid: "user-unverified",
       email: "test@gmail.com",
       verified: false,
       admin: false,
+    } as any);
+
+    vi.spyOn(adminDb, "collection").mockReturnValue({
+      doc: () => ({
+        get: vi.fn().mockResolvedValue({ exists: false, data: () => null }),
+      }),
     } as any);
 
     const req = new NextRequest("http://localhost:3000/api/listings/create", {
@@ -51,16 +57,25 @@ describe("Kiểm tra Server Auth Guards (src/lib/auth/server.ts)", () => {
 
     await expect(requireVerified(req)).rejects.toMatchObject({
       status: 403,
-      message: "Tài khoản cần được xác minh thẻ sinh viên.",
+      message: "Tài khoản chưa nộp hồ sơ xác minh sinh viên.",
     });
   });
 
-  it("requireVerified: Cho phép tài khoản đã xác minh thẻ SV (verified: true)", async () => {
+  it("requireVerified: Cho phép tài khoản đã xác minh thẻ SV (Firestore status: approved)", async () => {
     vi.spyOn(adminAuth, "verifyIdToken").mockResolvedValueOnce({
       uid: "user-verified",
       email: "student@hcmut.edu.vn",
       verified: true,
       admin: false,
+    } as any);
+
+    vi.spyOn(adminDb, "collection").mockReturnValue({
+      doc: () => ({
+        get: vi.fn().mockResolvedValue({
+          exists: true,
+          data: () => ({ status: "approved", schoolCode: "HCMUT" }),
+        }),
+      }),
     } as any);
 
     const req = new NextRequest("http://localhost:3000/api/listings/create", {

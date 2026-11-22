@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import type { DecodedIdToken } from "firebase-admin/auth";
 import { ApiError } from "./http";
+import { hasAdminClaim } from "./claims";
 
 export interface AuthenticatedUser {
   token: DecodedIdToken;
@@ -56,7 +57,7 @@ export async function requireVerified(req: NextRequest): Promise<VerifiedUser> {
   const auth = await requireAuth(req);
 
   // Admin có quyền vượt qua
-  if (auth.token.admin === true || auth.token.role === "admin") {
+  if (hasAdminClaim(auth.token)) {
     return {
       ...auth,
       verificationStatus: "approved",
@@ -90,7 +91,7 @@ export async function requireVerified(req: NextRequest): Promise<VerifiedUser> {
 export async function requireAdmin(req: NextRequest): Promise<AuthenticatedUser> {
   const auth = await requireAuth(req);
 
-  if (auth.token.admin !== true && auth.token.role !== "admin") {
+  if (!hasAdminClaim(auth.token)) {
     throw new ApiError(403, "FORBIDDEN_NOT_ADMIN", "Bạn không có quyền thực hiện thao tác quản trị.");
   }
 

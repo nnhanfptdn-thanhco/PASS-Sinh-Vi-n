@@ -16,14 +16,22 @@ export const POST = withApi(async (req: NextRequest) => {
   const userId = auth.uid;
   const userEmail = auth.email || "";
 
-  // 2. Giới hạn tần suất: Tối đa 3 lần nộp hồ sơ / ngày
-  await consumeRateLimit({
-    scope: "submit_verification",
-    key: userId,
-    limit: 3,
-    windowSec: 24 * 3600,
-    customMessage: "Bạn đã nộp hồ sơ 3 lần trong hôm nay. Vui lòng đợi Ban Quản Trị xét duyệt.",
-  });
+  // 2. Chặn ngay nếu máy chủ chưa cấu hình Service Account (P0-4)
+  if (!hasAdminCredentials) {
+    if (process.env.NODE_ENV !== "production" && process.env.ALLOW_MOCK_VERIFICATION === "1") {
+      return NextResponse.json({
+        success: true,
+        mock: true,
+        status: "pending",
+        message: "[DEV] Chế độ giả lập: hồ sơ KHÔNG được lưu vào Firestore.",
+      });
+    }
+    throw new ApiError(
+      503,
+      "ADMIN_SDK_NOT_CONFIGURED",
+      "Hệ thống tạm thời chưa nhận được hồ sơ. Vui lòng thử lại sau ít phút."
+    );
+  }
 
   // 3. Đọc dữ liệu gửi lên (hỗ trợ tối đa 1MB cho payload ảnh WebP Base64 dự phòng)
   const body = await readJson(req, 1024 * 1024);
@@ -32,7 +40,7 @@ export const POST = withApi(async (req: NextRequest) => {
   // 4. Kiểm tra đường dẫn ảnh thẻ (hỗ trợ cả Firebase Storage và Base64 WebP dự phòng)
   const isDataUrl = data.cardStoragePath.startsWith("data:image/");
   if (isDataUrl) {
-    if (!/^data:image\/(webp|jpeg|png);base64,/.test(data.cardStoragePath)) {
+    if (!/^data:image\/(webp|jpeg);base64,/.test(data.cardStoragePath)) {
       throw new ApiError(400, "INVALID_CARD_FILE", "Ảnh thẻ phải có định dạng WebP hoặc JPEG.");
     }
     if (data.cardStoragePath.length > 500 * 1024) {
@@ -43,21 +51,19 @@ export const POST = withApi(async (req: NextRequest) => {
     if (!CARD_PATH_RE.test(data.cardStoragePath)) {
       throw new ApiError(400, "INVALID_CARD_PATH", "Tệp ảnh thẻ sinh viên không hợp lệ hoặc không thuộc tài khoản của bạn.");
     }
-    if (hasAdminCredentials) {
-      try {
-        const cardFile = adminStorage.bucket().file(data.cardStoragePath);
-        const [cardExists] = await cardFile.exists();
-        if (!cardExists) {
-          throw new ApiError(400, "CARD_FILE_NOT_FOUND", "Không tìm thấy tệp ảnh thẻ trên hệ thống lưu trữ. Vui lòng tải lại ảnh.");
-        }
-        const [meta] = await cardFile.getMetadata();
-        if (!/^image\/(webp|jpeg)$/.test(String(meta.contentType)) || Number(meta.size) > 10 * 1024 * 1024) {
-          throw new ApiError(400, "INVALID_CARD_FILE", "Ảnh thẻ phải là WebP/JPEG dưới 10MB.");
-        }
-      } catch (storageErr) {
-        if (storageErr instanceof ApiError) throw storageErr;
-        console.warn("Bỏ qua kiểm tra bucket do hệ thống chưa cấu hình đầy đủ credentials:", storageErr);
+    try {
+      const cardFile = adminStorage.bucket().file(data.cardStoragePath);
+      const [cardExists] = await cardFile.exists();
+      if (!cardExists) {
+        throw new ApiError(400, "CARD_FILE_NOT_FOUND", "Không tìm thấy tệp ảnh thẻ trên hệ thống lưu trữ. Vui lòng tải lại ảnh.");
       }
+      const [meta] = await cardFile.getMetadata();
+      if (!/^image\/(webp|jpeg)$/.test(String(meta.contentType)) || Number(meta.size) > 10 * 1024 * 1024) {
+        throw new ApiError(400, "INVALID_CARD_FILE", "Ảnh thẻ phải là WebP/JPEG dưới 10MB.");
+      }
+    } catch (storageErr) {
+      if (storageErr instanceof ApiError) throw storageErr;
+      console.warn("Lỗi kiểm tra tệp thẻ trên Storage:", storageErr);
     }
   }
 
@@ -79,21 +85,31 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
-  // 6. Nếu hệ thống chưa cấu hình Service Account, phản hồi thành công chế độ chờ
-  if (!hasAdminCredentials) {
-    return NextResponse.json({
-      success: true,
-      status: "pending",
-      message: "Hồ sơ của bạn đã được tiếp nhận thành công và đang chờ ban quản trị xét duyệt.",
-    });
+  // 6. Chặn nhanh trước khi tiêu thụ lượt rate-limit (P2-1)
+  const existing = await adminDb.collection("verifications").doc(userId).get();
+  const st = existing.exists ? existing.data()?.status : null;
+  if (st === "approved") {
+    throw new ApiError(400, "ALREADY_VERIFIED", "Tài khoản của bạn đã được xác minh thẻ sinh viên thành công trước đó.");
+  }
+  if (st === "pending") {
+    throw new ApiError(400, "VERIFICATION_PENDING", "Hồ sơ của bạn đang được xét duyệt. Vui lòng chờ phản hồi từ Ban Quản Trị.");
   }
 
-  // 7. Tính mã băm HMAC-SHA256 & tham chiếu
+  // 7. Giới hạn tần suất: Tối đa 3 lần nộp hồ sơ / ngày (chỉ trừ lượt sau khi payload hợp lệ)
+  await consumeRateLimit({
+    scope: "submit_verification",
+    key: userId,
+    limit: 3,
+    windowSec: 24 * 3600,
+    customMessage: "Bạn đã nộp hồ sơ 3 lần trong hôm nay. Vui lòng đợi Ban Quản Trị xét duyệt.",
+  });
+
+  // 8. Tính mã băm HMAC-SHA256 & tham chiếu
   const verifRef = adminDb.collection("verifications").doc(userId);
   const studentIdHash = computeStudentIdHash(data.schoolCode, data.studentId);
   const hashLockRef = adminDb.collection("studentIdHashes").doc(studentIdHash);
 
-  // 8. Transaction: Kiểm tra trạng thái và trùng thẻ sinh viên, lưu hồ sơ pending
+  // 9. Transaction: Kiểm tra trạng thái và trùng thẻ sinh viên, lưu hồ sơ pending
   await adminDb.runTransaction(async (transaction) => {
     // Đọc trạng thái hiện tại TRONG transaction để chống nộp song song
     const currentVerif = await transaction.get(verifRef);

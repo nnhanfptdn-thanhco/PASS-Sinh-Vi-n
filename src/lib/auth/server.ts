@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { DecodedIdToken } from "firebase-admin/auth";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { ApiError } from "@/lib/server/http";
+import { hasAdminClaim } from "@/lib/server/claims";
 
-export class HttpError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
+export class HttpError extends ApiError {
+  constructor(status: number, message: string) {
+    super(status, `HTTP_${status}`, message);
     this.name = "HttpError";
   }
 }
@@ -31,17 +33,6 @@ export async function requireUser(req: NextRequest): Promise<DecodedIdToken> {
   }
 }
 
-/**
- * Yêu cầu người dùng đã xác minh thẻ sinh viên (verified === true) hoặc là admin.
- */
-export async function requireVerified(req: NextRequest): Promise<DecodedIdToken> {
-  const token = await requireUser(req);
-  if (token.verified !== true && token.admin !== true && token.role !== "admin") {
-    throw new HttpError(403, "Tài khoản cần được xác minh thẻ sinh viên.");
-  }
-  return token;
-}
-
 export interface ApprovedStudentResult {
   token: DecodedIdToken;
   verification: Record<string, unknown>;
@@ -59,7 +50,7 @@ export async function requireApprovedStudent(req: NextRequest): Promise<Approved
   const token = await requireUser(req);
 
   // Admin có thể bỏ qua kiểm tra hồ sơ thẻ sinh viên
-  if (token.admin === true || token.role === "admin") {
+  if (hasAdminClaim(token)) {
     let userDoc: Record<string, unknown> = { displayName: token.name || "Quản trị viên" };
     try {
       const userSnap = await adminDb.collection("users").doc(token.uid).get();
@@ -106,11 +97,19 @@ export async function requireApprovedStudent(req: NextRequest): Promise<Approved
 }
 
 /**
+ * Yêu cầu người dùng đã xác minh thẻ sinh viên (Single Source of Truth qua requireApprovedStudent).
+ */
+export async function requireVerified(req: NextRequest): Promise<DecodedIdToken> {
+  const { token } = await requireApprovedStudent(req);
+  return token;
+}
+
+/**
  * Yêu cầu quyền quản trị viên (admin === true).
  */
 export async function requireAdmin(req: NextRequest): Promise<DecodedIdToken> {
   const token = await requireUser(req);
-  if (token.admin !== true && token.role !== "admin") {
+  if (!hasAdminClaim(token)) {
     throw new HttpError(403, "Chỉ quản trị viên mới có quyền này.");
   }
   return token;
