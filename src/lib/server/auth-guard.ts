@@ -26,7 +26,7 @@ export async function requireAuth(req: NextRequest): Promise<AuthenticatedUser> 
   const match = /^Bearer (.+)$/i.exec(authHeader);
 
   if (!match) {
-    throw new ApiError(401, "UNAUTHORIZED", "Vui lòng đăng nhập để tiếp tục.");
+    throw new ApiError(401, "UNAUTHORIZED", "Vui lòng đăng nhập.");
   }
 
   const tokenString = match[1];
@@ -41,6 +41,7 @@ export async function requireAuth(req: NextRequest): Promise<AuthenticatedUser> 
       name: decoded.name || null,
     };
   } catch (err: unknown) {
+    const code = (err as { code?: string })?.code || "";
     const msg = err instanceof Error ? err.message : "";
     console.error("[AUTH_GUARD] verifyIdToken failed:", msg);
 
@@ -59,10 +60,31 @@ export async function requireAuth(req: NextRequest): Promise<AuthenticatedUser> 
       }
     }
 
-    if (msg.includes("revoked") || msg.includes("disabled")) {
-      throw new ApiError(401, "SESSION_REVOKED", "Phiên đăng nhập đã bị thu hồi hoặc tài khoản bị vô hiệu hóa.");
+    const isExplicitAuthError =
+      code === "auth/id-token-expired" ||
+      code === "auth/invalid-id-token" ||
+      code === "auth/id-token-revoked" ||
+      code === "auth/user-disabled" ||
+      code === "auth/argument-error" ||
+      msg.includes("expired") ||
+      msg.includes("revoked") ||
+      msg.includes("disabled") ||
+      msg.includes("Decoding Firebase ID token failed");
+
+    if (isExplicitAuthError) {
+      if (
+        code === "auth/id-token-revoked" ||
+        code === "auth/user-disabled" ||
+        msg.includes("revoked") ||
+        msg.includes("disabled")
+      ) {
+        throw new ApiError(401, "SESSION_REVOKED", "Phiên đăng nhập đã bị thu hồi hoặc tài khoản bị vô hiệu hóa.");
+      }
+      throw new ApiError(401, "INVALID_TOKEN", "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
     }
-    throw new ApiError(401, "INVALID_TOKEN", "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
+
+    // Mặc định trả 503 cho mọi lỗi không nhận diện được (blip mạng, timeout, service down...)
+    throw new ApiError(503, "AUTH_SERVICE_UNAVAILABLE", "Dịch vụ xác thực tạm thời không khả dụng. Vui lòng thử lại sau.");
   }
 }
 

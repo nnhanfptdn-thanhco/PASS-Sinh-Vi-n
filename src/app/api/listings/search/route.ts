@@ -1,10 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchListings } from "@/lib/services/listings";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
+import { ApiError } from "@/lib/server/http";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "anonymous";
+
+    await consumeRateLimit({
+      scope: "search_listings",
+      key: ip,
+      limit: 60,
+      windowSec: 60,
+      customMessage: "Bạn đang tìm kiếm quá nhanh. Vui lòng thử lại sau giây lát.",
+    });
+
     const { searchParams } = new URL(req.url);
 
     const num = (v: string | null) => {
@@ -58,9 +73,20 @@ export async function GET(req: NextRequest) {
         nextCursor: result.nextCursor,
         count: result.items.length,
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+        },
+      }
     );
   } catch (err: unknown) {
+    if (err instanceof ApiError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: err.status }
+      );
+    }
     console.error("Lỗi tìm kiếm tin đăng:", err);
     return NextResponse.json(
       {

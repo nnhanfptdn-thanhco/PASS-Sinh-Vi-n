@@ -38,34 +38,25 @@ export const POST = withApi(async (req: NextRequest) => {
   const body = await readJson(req, 1024 * 1024);
   const data = submitVerificationSchema.parse(body);
 
-  // 4. Kiểm tra đường dẫn ảnh thẻ (hỗ trợ cả Firebase Storage và Base64 WebP dự phòng)
-  const isDataUrl = data.cardStoragePath.startsWith("data:image/");
-  if (isDataUrl) {
-    if (!/^data:image\/(webp|jpeg);base64,/.test(data.cardStoragePath)) {
-      throw new ApiError(400, "INVALID_CARD_FILE", "Ảnh thẻ phải có định dạng WebP hoặc JPEG.");
+  // 4. Kiểm tra đường dẫn ảnh thẻ (Bắt buộc Cloud Storage private/cards/{userId}/...)
+  const CARD_PATH_RE = new RegExp(`^private/cards/${userId}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`);
+  if (!CARD_PATH_RE.test(data.cardStoragePath)) {
+    throw new ApiError(400, "INVALID_CARD_PATH", "Tệp ảnh thẻ sinh viên không hợp lệ hoặc không thuộc tài khoản của bạn.");
+  }
+  try {
+    const cardFile = adminStorage.bucket().file(data.cardStoragePath);
+    const [cardExists] = await cardFile.exists();
+    if (!cardExists) {
+      throw new ApiError(400, "CARD_FILE_NOT_FOUND", "Không tìm thấy tệp ảnh thẻ trên hệ thống lưu trữ. Vui lòng tải lại ảnh.");
     }
-    if (data.cardStoragePath.length > 500 * 1024) {
-      throw new ApiError(400, "INVALID_CARD_FILE", "Dung lượng ảnh thẻ vượt quá giới hạn 500KB.");
+    const [meta] = await cardFile.getMetadata();
+    if (!/^image\/(webp|jpeg)$/.test(String(meta.contentType)) || Number(meta.size) > 10 * 1024 * 1024) {
+      throw new ApiError(400, "INVALID_CARD_FILE", "Ảnh thẻ phải là WebP/JPEG dưới 10MB.");
     }
-  } else {
-    const CARD_PATH_RE = new RegExp(`^private/cards/${userId}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`);
-    if (!CARD_PATH_RE.test(data.cardStoragePath)) {
-      throw new ApiError(400, "INVALID_CARD_PATH", "Tệp ảnh thẻ sinh viên không hợp lệ hoặc không thuộc tài khoản của bạn.");
-    }
-    try {
-      const cardFile = adminStorage.bucket().file(data.cardStoragePath);
-      const [cardExists] = await cardFile.exists();
-      if (!cardExists) {
-        throw new ApiError(400, "CARD_FILE_NOT_FOUND", "Không tìm thấy tệp ảnh thẻ trên hệ thống lưu trữ. Vui lòng tải lại ảnh.");
-      }
-      const [meta] = await cardFile.getMetadata();
-      if (!/^image\/(webp|jpeg)$/.test(String(meta.contentType)) || Number(meta.size) > 10 * 1024 * 1024) {
-        throw new ApiError(400, "INVALID_CARD_FILE", "Ảnh thẻ phải là WebP/JPEG dưới 10MB.");
-      }
-    } catch (storageErr) {
-      if (storageErr instanceof ApiError) throw storageErr;
-      console.warn("Lỗi kiểm tra tệp thẻ trên Storage:", storageErr);
-    }
+  } catch (storageErr) {
+    if (storageErr instanceof ApiError) throw storageErr;
+    console.error("Lỗi kiểm tra tệp thẻ trên Storage:", storageErr);
+    throw new ApiError(503, "STORAGE_UNAVAILABLE", "Không thể xác minh tệp thẻ trên hệ thống lưu trữ. Vui lòng thử lại sau.");
   }
 
   // 5. Kiểm tra trường học và campus
@@ -167,24 +158,21 @@ export const POST = withApi(async (req: NextRequest) => {
       isEduEmail,
       isGraduating: Boolean(data.isGraduating),
       cardStoragePath: data.cardStoragePath,
+      cardDeleted: false,
       rejectReason: null,
       rejectNote: null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    // Lưu vào users & usersPrivate
+    // Lưu vào users & usersPrivate: chỉ ghi displayName và địa phương, trường học chỉ ghi khi Admin duyệt chính thức
     const userRef = adminDb.collection("users").doc(userId);
     transaction.set(
       userRef,
       {
         displayName: data.displayName,
-        schoolCode: data.schoolCode,
-        schoolName: matchedSchool.name,
-        campusId: data.campusId || null,
         provinceCode: data.provinceCode || null,
         wardCode: data.wardCode || null,
-        isGraduating: Boolean(data.isGraduating),
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }

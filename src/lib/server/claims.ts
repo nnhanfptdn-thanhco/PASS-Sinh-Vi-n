@@ -11,13 +11,13 @@ export async function setVerifiedClaim(uid: string, verified: boolean): Promise<
     const claims = { ...(rec.customClaims || {}) } as Record<string, unknown>;
     
     // Bảo vệ quyền admin: kiểm tra cả custom claims hiện tại lẫn email admin cấu hình
-    const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "nnhanfptdn@gmail.com";
+    const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "";
     const adminEmails = adminEmailsConfig
       .split(",")
       .map((e) => e.trim().toLowerCase())
       .filter(Boolean);
     const isEmailAdmin = Boolean(
-      rec.email && rec.emailVerified && adminEmails.includes(rec.email.toLowerCase())
+      rec.email && rec.emailVerified && adminEmails.length > 0 && adminEmails.includes(rec.email.toLowerCase())
     );
     const isAdmin = hasAdminClaim(claims) || isEmailAdmin;
 
@@ -28,9 +28,28 @@ export async function setVerifiedClaim(uid: string, verified: boolean): Promise<
     if (isAdmin) claims.admin = true; // chuẩn hóa dạng claim admin
 
     await adminAuth.setCustomUserClaims(uid, claims);
+    if (!verified) {
+      await adminAuth.revokeRefreshTokens(uid).catch(() => {});
+    }
     return true;
   } catch (e) {
     console.error("[CLAIMS] sync failed", e instanceof Error ? e.message : "unknown");
+    return false;
+  }
+}
+
+/** Gỡ bỏ hoàn toàn quyền Admin và thu hồi tokens tức thì. */
+export async function clearAdminClaim(uid: string): Promise<boolean> {
+  try {
+    const rec = await adminAuth.getUser(uid);
+    const claims = { ...(rec.customClaims || {}) } as Record<string, unknown>;
+    delete claims.admin;
+    claims.role = claims.verified ? "verified" : "pending";
+    await adminAuth.setCustomUserClaims(uid, claims);
+    await adminAuth.revokeRefreshTokens(uid);
+    return true;
+  } catch (e) {
+    console.error("[CLAIMS] clearAdminClaim failed", e instanceof Error ? e.message : "unknown");
     return false;
   }
 }

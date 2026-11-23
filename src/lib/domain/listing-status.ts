@@ -54,14 +54,14 @@ export function validateManageListingAction(
           error: "Tin đăng đã ở trạng thái tạm ẩn.",
         };
       }
-      if (currentStatus === "reserved") {
+      if (currentStatus === "reserved" && !isAdmin) {
         return {
           valid: false,
           statusCode: 409,
           error: "Tin đang có người giữ chỗ. Bạn cần hủy hoặc hoàn tất giữ chỗ trước khi ẩn tin.",
         };
       }
-      if (currentStatus !== "active") {
+      if (currentStatus !== "active" && !isAdmin) {
         return {
           valid: false,
           statusCode: 409,
@@ -118,14 +118,25 @@ export function validateManageListingAction(
     }
 
     case "renew": {
-      if (currentStatus === "hidden_by_seller") {
+      if (currentStatus === "reserved") {
+        return {
+          valid: false,
+          statusCode: 409,
+          error: "Tin đang có người giữ chỗ. Bạn cần hoàn tất hoặc hủy giao dịch giữ chỗ trước khi gia hạn tin.",
+        };
+      }
+      if (currentStatus === "hidden_by_seller" && !isExpired) {
         return {
           valid: false,
           statusCode: 409,
           error: "Vui lòng hiện tin trước khi thực hiện gia hạn.",
         };
       }
-      if (currentStatus !== "active" && currentStatus !== "reserved" && currentStatus !== "expired") {
+      if (
+        currentStatus !== "active" &&
+        currentStatus !== "expired" &&
+        currentStatus !== "hidden_by_seller"
+      ) {
         return {
           valid: false,
           statusCode: 409,

@@ -63,30 +63,61 @@ export const POST = withApi(async (req: NextRequest) => {
   const privateData = privateSnap.data() || {};
   const confirmedBuyerId = privateData.confirmedBuyerId as string | undefined;
 
-  // Nếu tin đang ở trạng thái reserved: CHỈ người mua đã được xác nhận (hoặc admin) mới được xem
-  if (listingStatus === "reserved") {
-    if (viewerId !== confirmedBuyerId && !isAdmin) {
-      throw new ApiError(
-        404,
-        "LISTING_NOT_AVAILABLE",
-        "Món đồ này hiện đã có người giữ chỗ và đang khóa thông tin liên hệ."
-      );
+  const isConfirmedBuyer = viewerId === confirmedBuyerId || isAdmin;
+
+  // PHƯƠNG ÁN A (CỔNG BẢO MẬT ĐẶT TRƯỚC RATE LIMIT & LOG):
+  // Khóa toàn bộ thông tin Zalo/SĐT và địa chỉ cho tới khi người bán đã xác nhận giữ chỗ (confirmed)
+  if (!isConfirmedBuyer) {
+    throw new ApiError(
+      403,
+      "RESERVATION_CONFIRMATION_REQUIRED",
+      "Thông tin liên hệ Zalo/SĐT và địa chỉ hẹn của người bán chỉ được cung cấp sau khi người bán đã xác nhận giữ chỗ cho bạn."
+    );
+  }
+
+  // Nếu tin đang ở trạng thái reserved: Kiểm tra lười hạn giữ chỗ 72 giờ
+  if (listingStatus === "reserved" && !isAdmin) {
+    const confirmedResSnap = await adminDb
+      .collection("reservations")
+      .where("listingId", "==", listingId)
+      .where("status", "==", "confirmed")
+      .limit(1)
+      .get();
+
+    if (!confirmedResSnap.empty) {
+      const holdExpiresAtStr = confirmedResSnap.docs[0].data()?.holdExpiresAt as string | undefined;
+      if (holdExpiresAtStr) {
+        const holdMs = Date.parse(holdExpiresAtStr);
+        if (Number.isFinite(holdMs) && holdMs < Date.now()) {
+          throw new ApiError(
+            404,
+            "LISTING_NOT_AVAILABLE",
+            "Thời gian giữ chỗ 72 giờ của món đồ này đã kết thúc."
+          );
+        }
+      }
     }
   }
 
-  // Tiêu thụ quota 10 lượt/giờ SAU KHI đã kiểm tra tin khả dụng (F11)
+  // Tiêu thụ quota 10 lượt/giờ và trần tối đa 30 lượt/ngày CHỈ KHI ĐÃ QUA CỔNG BẢO MẬT (F11)
   if (!alreadyViewed && !isAdmin) {
     await consumeRateLimit({
       scope: "contact_view",
-      key: viewerId,
+      key: `${viewerId}_hourly`,
       limit: 10,
       windowSec: 3600,
       customMessage:
         "Bạn đã xem liên hệ 10 tin trong 1 giờ qua. Vui lòng quay lại sau nhằm bảo vệ quyền riêng tư của sinh viên.",
     });
+    await consumeRateLimit({
+      scope: "contact_view",
+      key: `${viewerId}_daily`,
+      limit: 30,
+      windowSec: 86400,
+      customMessage:
+        "Bạn đã đạt giới hạn xem liên hệ tối đa 30 tin trong ngày hôm nay. Vui lòng quay lại vào ngày mai nhằm bảo vệ quyền riêng tư của sinh viên.",
+    });
   }
-
-  const isConfirmedBuyer = viewerId === confirmedBuyerId || isAdmin;
 
   // 5. Đọc thông tin liên hệ bảo mật từ usersPrivate của người bán
   const sellerPrivateSnap = await adminDb.collection("usersPrivate").doc(sellerId).get();

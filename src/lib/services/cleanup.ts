@@ -1,11 +1,13 @@
 import { adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
 import { todayVN, isPastDeadline } from "@/lib/utils/date";
+import { purgeUserData } from "@/lib/services/account-purge";
 
 export interface CleanupResult {
   deletedCardsCount: number;
   expiredListingsCount: number;
   expiredPendingReservationsCount: number;
   expiredConfirmedReservationsCount: number;
+  purgedPendingAccountsCount?: number;
 }
 
 /**
@@ -134,19 +136,30 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
   let expiredPendingReservationsCount = 0;
   let expiredConfirmedReservationsCount = 0;
 
-  // --- 1. DỌN DẸP ẢNH THẺ SINH VIÊN QUÁ 30 NGÀY TỪ decidedAt ---
+  // --- 1. DỌN DẸP ẢNH THẺ SINH VIÊN QUÁ 30 NGÀY DÙNG cardPurgeAt ---
   try {
-    const oldVerifsSnap = await adminDb
-      .collection("verifications")
-      .where("status", "in", ["approved", "rejected", "expired"])
-      .where("decidedAt", "<=", thirtyDaysAgo)
-      .limit(200)
-      .get();
+    let oldVerifsSnap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+    try {
+      oldVerifsSnap = await adminDb
+        .collection("verifications")
+        .where("cardPurgeAt", "<=", now)
+        .orderBy("cardPurgeAt", "asc")
+        .limit(200)
+        .get();
+    } catch {
+      // Fallback quét cho hồ sơ cũ chưa có field cardPurgeAt
+      oldVerifsSnap = await adminDb
+        .collection("verifications")
+        .where("status", "in", ["approved", "rejected", "expired"])
+        .where("decidedAt", "<=", thirtyDaysAgo)
+        .limit(200)
+        .get();
+    }
 
     for (const doc of oldVerifsSnap.docs) {
       const data = doc.data();
       const storagePath = data.cardStoragePath || data.cardImagePath;
-      if (storagePath && typeof storagePath === "string" && !data.cardDeleted) {
+      if (typeof storagePath === "string" && storagePath.length > 0) {
         try {
           if (storagePath.startsWith("private/cards/")) {
             await adminStorage.bucket().file(storagePath).delete({ ignoreNotFound: true });
@@ -156,12 +169,16 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
             cardStoragePath: null,
             cardImagePath: null,
             cardImagePreviewUrl: null,
+            cardPurgeAt: FieldValue.delete(),
+            cardDeletePending: FieldValue.delete(),
             cardAutoDeletedAt: FieldValue.serverTimestamp(),
           });
           deletedCardsCount++;
         } catch (err) {
           console.warn(`Lỗi xóa ảnh thẻ hồ sơ ${doc.id}:`, err);
         }
+      } else if (data.cardPurgeAt) {
+        await doc.ref.update({ cardPurgeAt: FieldValue.delete() }).catch(() => {});
       }
     }
   } catch (err) {
@@ -312,10 +329,35 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
     console.error("Lỗi khi xử lý giữ chỗ confirmed hết hạn:", err);
   }
 
+  // --- 5. SWEEPER: HOÀN TẤT XÓA TÀI KHOẢN TREO QUÁ 10 PHÚT (IDEMPOTENT & FAIL-CLOSED) ---
+  let purgedPendingAccountsCount = 0;
+  try {
+    const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000);
+    const pendingSnap = await adminDb
+      .collection("pendingDeletions")
+      .where("startedAt", "<=", tenMinAgo)
+      .limit(50)
+      .get();
+
+    for (const doc of pendingSnap.docs) {
+      const uid = doc.id;
+      const hash = (doc.data()?.studentIdHash as string) || null;
+      try {
+        await purgeUserData(uid, hash);
+        purgedPendingAccountsCount++;
+      } catch (pErr) {
+        console.error(`[CleanupSweeper] Lỗi khi dọn tài khoản treo ${uid}:`, pErr);
+      }
+    }
+  } catch (err) {
+    console.error("Lỗi sweeper pendingDeletions:", err);
+  }
+
   return {
     deletedCardsCount,
     expiredListingsCount,
     expiredPendingReservationsCount,
     expiredConfirmedReservationsCount,
+    purgedPendingAccountsCount,
   };
 }

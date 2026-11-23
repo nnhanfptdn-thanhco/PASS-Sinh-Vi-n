@@ -54,10 +54,42 @@ describe("Máy trạng thái tin đăng theo Bảng 2.3", () => {
     const res = validateManageListingAction("mark_sold", {
       currentStatus: "reserved",
       passDeadline: FUTURE,
+      isAdmin: false,
     });
     expect(res.valid).toBe(false);
     expect(res.statusCode).toBe(409);
     expect(res.error).toContain("Giữ chỗ");
+  });
+
+  it("mark_sold: reserved với admin (cũng bị từ chối -> 409, phải qua luồng reservations/action)", () => {
+    const res = validateManageListingAction("mark_sold", {
+      currentStatus: "reserved",
+      passDeadline: FUTURE,
+      isAdmin: true,
+    });
+    expect(res.valid).toBe(false);
+    expect(res.statusCode).toBe(409);
+    expect(res.error).toContain("Giữ chỗ");
+  });
+
+  it("renew: reserved với non-admin (bị từ chối -> 409, không cho gia hạn đè giao dịch)", () => {
+    const res = validateManageListingAction("renew", {
+      currentStatus: "reserved",
+      passDeadline: FUTURE,
+      isAdmin: false,
+    });
+    expect(res.valid).toBe(false);
+    expect(res.statusCode).toBe(409);
+  });
+
+  it("renew: reserved với admin (cũng bị từ chối -> 409, không cho gia hạn đè giao dịch)", () => {
+    const res = validateManageListingAction("renew", {
+      currentStatus: "reserved",
+      passDeadline: FUTURE,
+      isAdmin: true,
+    });
+    expect(res.valid).toBe(false);
+    expect(res.statusCode).toBe(409);
   });
 
   it("sold -> bất kỳ hành động nào (bị từ chối -> 409, trạng thái cuối)", () => {
@@ -90,7 +122,7 @@ describe("Máy trạng thái tin đăng theo Bảng 2.3", () => {
     expect(res.valid).toBe(true);
   });
 
-  it("renew: hợp lệ cho expired, active, reserved", () => {
+  it("renew: hợp lệ cho expired và active", () => {
     expect(
       validateManageListingAction("renew", {
         currentStatus: "expired",
@@ -104,13 +136,6 @@ describe("Máy trạng thái tin đăng theo Bảng 2.3", () => {
         passDeadline: FUTURE,
       }).valid
     ).toBe(true);
-
-    expect(
-      validateManageListingAction("renew", {
-        currentStatus: "reserved",
-        passDeadline: FUTURE,
-      }).valid
-    ).toBe(true);
   });
 
   it("renew: từ chối nếu tin đang ở trạng thái hidden_by_seller (phải hiện tin trước)", () => {
@@ -120,5 +145,22 @@ describe("Máy trạng thái tin đăng theo Bảng 2.3", () => {
     });
     expect(res.valid).toBe(false);
     expect(res.statusCode).toBe(409);
+  });
+
+  it("renew: cho phép gia hạn nếu tin hidden_by_seller đã quá hạn (tránh dead-end với show)", () => {
+    const res = validateManageListingAction("renew", {
+      currentStatus: "hidden_by_seller",
+      passDeadline: PAST,
+    });
+    expect(res.valid).toBe(true);
+  });
+
+  it("hide: admin được phép ẩn tin đang reserved (kiểm duyệt vi phạm)", () => {
+    const res = validateManageListingAction("hide", {
+      currentStatus: "reserved",
+      passDeadline: FUTURE,
+      isAdmin: true,
+    });
+    expect(res.valid).toBe(true);
   });
 });

@@ -45,7 +45,7 @@ export const POST = withApi(async (req: NextRequest) => {
     throw new ApiError(403, "USER_INACTIVE", "Tài khoản đối phương hiện không thể nhận tin nhắn.");
   }
 
-  // 3. Nếu có listingId: Kiểm tra tin đăng tồn tại và logic khởi tạo (F21)
+  // 3. Kiểm tra tính hợp lệ: bắt buộc có listingId hoặc đã có giao dịch giữ chỗ giữa hai bên
   let listingTitle = "";
   let listingPrice = 0;
   let listingCoverImage = "";
@@ -81,6 +81,30 @@ export const POST = withApi(async (req: NextRequest) => {
     listingTitle = listingData.title || "";
     listingPrice = listingData.price || 0;
     listingCoverImage = listingData.coverImage || "";
+  } else {
+    // Nếu không có listingId, bắt buộc hai bên phải có giao dịch giữ chỗ tồn tại
+    const [resAsBuyer, resAsSeller] = await Promise.all([
+      adminDb
+        .collection("reservations")
+        .where("buyerId", "==", uid)
+        .where("sellerId", "==", otherUserId)
+        .limit(1)
+        .get(),
+      adminDb
+        .collection("reservations")
+        .where("sellerId", "==", uid)
+        .where("buyerId", "==", otherUserId)
+        .limit(1)
+        .get(),
+    ]);
+
+    if (resAsBuyer.empty && resAsSeller.empty) {
+      throw new ApiError(
+        400,
+        "LISTING_OR_RESERVATION_REQUIRED",
+        "Chỉ được mở hội thoại gắn liền với món đồ hoặc khi hai bên đã có giao dịch giữ chỗ với nhau."
+      );
+    }
   }
 
   // 4. Id hội thoại xác định: sorted([uidA, uidB]).join('_') + (listingId ? '_' + listingId : '')

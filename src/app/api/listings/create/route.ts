@@ -84,25 +84,36 @@ export const POST = withApi(async (req: NextRequest) => {
     );
   }
 
-  // 6. Kiểm tra tính hợp lệ của ảnh (chỉ nhận URL Storage của chính người bán)
+  // 6. Kiểm tra tính hợp lệ của ảnh (chỉ nhận URL/đường dẫn Storage của chính người bán, loại bỏ hoàn toàn data:image/)
   const BUCKET =
     process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
     process.env.FIREBASE_STORAGE_BUCKET ||
     "";
   function isOwnListingImage(url: string, uid: string): boolean {
-    if (url.startsWith("data:image/")) return true;
+    if (!url || typeof url !== "string") return false;
+    // Chặn hoàn toàn data:image/ để chống DoS và lưu trữ rác base64
+    if (url.startsWith("data:image/")) return false;
+
+    // Chấp nhận đường dẫn storage trực tiếp dạng public/listings/{uid}/...
+    if (url.startsWith(`public/listings/${uid}/`)) {
+      return new RegExp(
+        `^public/listings/${uid}/[A-Za-z0-9_-]{4,64}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`
+      ).test(url);
+    }
+
     try {
       const u = new URL(url);
       if (
         u.protocol !== "https:" ||
         u.hostname !== "firebasestorage.googleapis.com"
-      )
+      ) {
         return false;
+      }
       const m = /^\/v0\/b\/([^/]+)\/o\/(.+)$/.exec(u.pathname);
       if (!m || (BUCKET && m[1] !== BUCKET)) return false;
       const objectPath = decodeURIComponent(m[2]);
       return new RegExp(
-        `^public/listings/${uid}/[A-Za-z0-9_-]{8,64}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`
+        `^public/listings/${uid}/[A-Za-z0-9_-]{4,64}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`
       ).test(objectPath);
     } catch {
       return false;

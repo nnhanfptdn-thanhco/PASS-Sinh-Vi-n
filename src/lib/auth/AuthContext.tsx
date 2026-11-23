@@ -17,24 +17,12 @@ import { getFirebaseAuthErrorMessage } from "@/lib/auth/errors";
 
 export type UserRole = "guest" | "pending" | "verified" | "admin";
 
-// Chỉ để HIỂN THỊ UI. Quyền thật luôn do máy chủ kiểm bằng custom claim.
-const CLIENT_ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "nnhanfptdn@gmail.com")
-  .split(",")
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
-
-export function deriveRole(
-  claims: Record<string, unknown>,
-  email: string | null,
-  emailVerified: boolean
-) {
-  const claimAdmin = claims.admin === true || claims.role === "admin";
-  const emailAdmin =
-    emailVerified && !!email && CLIENT_ADMIN_EMAILS.includes(email.toLowerCase());
-  const isAdmin = claimAdmin || emailAdmin;
+// Quyền hạn suy ra duy nhất từ Firebase Auth Custom Claims (không để lộ email admin ra client bundle)
+export function deriveRole(claims: Record<string, unknown>) {
+  const isAdmin = claims.admin === true || claims.role === "admin";
   const isVerified = claims.verified === true || claims.role === "verified" || isAdmin;
   const role: UserRole = isAdmin ? "admin" : isVerified ? "verified" : "pending";
-  return { isAdmin, isVerified, role, adminClaimMissing: emailAdmin && !claimAdmin };
+  return { isAdmin, isVerified, role, adminClaimMissing: false };
 }
 
 export interface UserProfileData {
@@ -101,7 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!u) return;
     try {
       const tokenResult = await u.getIdTokenResult(true);
-      const d = deriveRole(tokenResult.claims as Record<string, unknown>, u.email, u.emailVerified);
+      const d = deriveRole(tokenResult.claims as Record<string, unknown>);
       setRole(d.role);
       setAdminClaimMissing(d.adminClaimMissing);
       setProfile((prev) =>
@@ -169,11 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const tokenResult: IdTokenResult = await currentUser.getIdTokenResult();
         if (seq !== authSeq) return;
 
-        const d = deriveRole(
-          tokenResult.claims as Record<string, unknown>,
-          currentUser.email,
-          currentUser.emailVerified
-        );
+        const d = deriveRole(tokenResult.claims as Record<string, unknown>);
         setRole(d.role);
         setAdminClaimMissing(d.adminClaimMissing);
 
@@ -273,11 +257,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 try {
                   const refreshedToken = await currentUser.getIdTokenResult(true);
                   if (seq !== authSeq) return;
-                  const refreshedD = deriveRole(
-                    refreshedToken.claims as Record<string, unknown>,
-                    currentUser.email,
-                    currentUser.emailVerified
-                  );
+                  const refreshedD = deriveRole(refreshedToken.claims as Record<string, unknown>);
                   setRole(refreshedD.role);
                   setAdminClaimMissing(refreshedD.adminClaimMissing);
                 } catch {
@@ -296,7 +276,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         );
       } catch {
-        const fallbackD = deriveRole({}, currentUser.email, currentUser.emailVerified);
+        const fallbackD = deriveRole({});
         setRole(fallbackD.role);
         setAdminClaimMissing(fallbackD.adminClaimMissing);
         setIsLoading(false);

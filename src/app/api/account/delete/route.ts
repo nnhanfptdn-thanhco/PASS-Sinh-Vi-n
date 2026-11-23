@@ -1,20 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser, HttpError } from "@/lib/auth/server";
-import { adminAuth, adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
+import { adminAuth, adminDb, FieldValue } from "@/lib/firebase/admin";
+import { purgeUserData } from "@/lib/services/account-purge";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-/**
- * Helper xóa danh sách DocumentReference theo từng lô <= 400 thao tác (F12)
- */
-async function deleteRefsInChunks(refs: FirebaseFirestore.DocumentReference[]) {
-  for (let i = 0; i < refs.length; i += 400) {
-    const b = adminDb.batch();
-    refs.slice(i, i + 400).forEach((r) => b.delete(r));
-    await b.commit();
-  }
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -31,18 +21,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 0. Vô hiệu hóa tài khoản và thu hồi tokens ngay lập tức để đảm bảo tính idempotent và chống race-condition
-    try {
-      await adminAuth.updateUser(userId, { disabled: true });
-      await adminAuth.revokeRefreshTokens(userId);
-    } catch (disableErr: unknown) {
-      const errCode = (disableErr as { code?: string })?.code;
-      if (errCode !== "auth/user-not-found") {
-        console.warn("Lỗi khi vô hiệu hóa user trước khi xóa:", disableErr);
-      }
-    }
-
-    // 1. Chặn xóa nếu còn giao dịch confirmed hoặc tin đang reserved (F12)
+    // 1. Kiểm tra điều kiện tiên quyết: còn giao dịch confirmed hoặc tin đang reserved -> trả 400 (CHƯA KHÓA GÌ)
     const [buyerConfirmedSnap, sellerConfirmedSnap, reservedListingsSnap] = await Promise.all([
       adminDb
         .collection("reservations")
@@ -71,192 +50,46 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Hủy các yêu cầu giữ chỗ còn mở (pending / waitlisted) và thông báo đối tác
-    const [buyerOpenSnap, sellerOpenSnap] = await Promise.all([
-      adminDb
-        .collection("reservations")
-        .where("buyerId", "==", userId)
-        .where("status", "in", ["pending", "waitlisted"])
-        .get(),
-      adminDb
-        .collection("reservations")
-        .where("sellerId", "==", userId)
-        .where("status", "in", ["pending", "waitlisted"])
-        .get(),
-    ]);
+    // 1b. Đọc studentIdHash TRƯỚC KHI khóa tài khoản và lưu vào marker pendingDeletions
+    const verifSnap = await adminDb.collection("verifications").doc(userId).get();
+    const studentIdHash = (verifSnap.data()?.studentIdHash as string | undefined) || null;
 
-    const resCancelBatch = adminDb.batch();
-    for (const doc of buyerOpenSnap.docs) {
-      resCancelBatch.update(doc.ref, {
-        status: "cancelled",
-        cancelledBy: "system",
-        cancelReason: "Tài khoản người mua đã được xóa",
-        cancelledAt: FieldValue.serverTimestamp(),
-      });
-      const notifRef = adminDb.collection("notifications").doc();
-      resCancelBatch.set(notifRef, {
-        userId: doc.data().sellerId,
-        type: "reservation_cancelled",
-        title: "Yêu cầu giữ chỗ đã bị hủy",
-        body: "Người mua đã xóa tài khoản trên hệ thống.",
-        targetId: doc.id,
-        read: false,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-    }
+    // Ghi marker pendingDeletions với studentIdHash để sweeper có thể tái xử lý nếu xảy ra crash giữa chừng
+    await adminDb.collection("pendingDeletions").doc(userId).set({
+      userId,
+      studentIdHash,
+      startedAt: FieldValue.serverTimestamp(),
+    });
 
-    for (const doc of sellerOpenSnap.docs) {
-      resCancelBatch.update(doc.ref, {
-        status: "cancelled",
-        cancelledBy: "system",
-        cancelReason: "Tài khoản người bán đã được xóa",
-        cancelledAt: FieldValue.serverTimestamp(),
-      });
-      const notifRef = adminDb.collection("notifications").doc();
-      resCancelBatch.set(notifRef, {
-        userId: doc.data().buyerId,
-        type: "reservation_cancelled",
-        title: "Yêu cầu giữ chỗ đã bị hủy",
-        body: "Người bán đã xóa tài khoản trên hệ thống.",
-        targetId: doc.id,
-        read: false,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-    }
-    await resCancelBatch.commit();
-
-    // 3. Đọc studentIdHash TRƯỚC KHI xóa verifications để giải phóng khóa MSSV (F12)
-    const verifRef = adminDb.collection("verifications").doc(userId);
-    const verifSnap = await verifRef.get();
-    const studentIdHash = verifSnap.data()?.studentIdHash as string | undefined;
-
-    // 4. Thu thập toàn bộ các DocumentReference cần xóa theo đợt
-    const refsToDelete: FirebaseFirestore.DocumentReference[] = [
-      adminDb.collection("users").doc(userId),
-      adminDb.collection("usersPrivate").doc(userId),
-      verifRef,
-    ];
-
-    if (studentIdHash) {
-      refsToDelete.push(adminDb.collection("studentIdHashes").doc(studentIdHash));
-    }
-
-    // Listings và listingsPrivate
-    const listingsSnap = await adminDb
-      .collection("listings")
-      .where("sellerId", "==", userId)
-      .get();
-    for (const doc of listingsSnap.docs) {
-      refsToDelete.push(doc.ref);
-      refsToDelete.push(adminDb.collection("listingsPrivate").doc(doc.id));
-    }
-
-    // Favorites
-    const favoritesSnap = await adminDb
-      .collection("favorites")
-      .where("userId", "==", userId)
-      .get();
-    favoritesSnap.docs.forEach((d) => refsToDelete.push(d.ref));
-
-    // Notifications
-    const notifSnap = await adminDb
-      .collection("notifications")
-      .where("userId", "==", userId)
-      .get();
-    notifSnap.docs.forEach((d) => refsToDelete.push(d.ref));
-
-    // Contact view logs
-    const viewLogsSnap = await adminDb
-      .collection("contactViewLogs")
-      .where("viewerId", "==", userId)
-      .get();
-    viewLogsSnap.docs.forEach((d) => refsToDelete.push(d.ref));
-
-    // Reports do user tạo
-    const userReportsSnap = await adminDb
-      .collection("reports")
-      .where("reporterId", "==", userId)
-      .get();
-    userReportsSnap.docs.forEach((d) => refsToDelete.push(d.ref));
-
-    // Appeals do user tạo
-    const userAppealsSnap = await adminDb
-      .collection("appeals")
-      .where("userId", "==", userId)
-      .get();
-    userAppealsSnap.docs.forEach((d) => refsToDelete.push(d.ref));
-
-    // Đánh giá mà user nhận được (targetUserId == userId)
-    const receivedReviewsSnap = await adminDb
-      .collection("reviews")
-      .where("targetUserId", "==", userId)
-      .get();
-    receivedReviewsSnap.docs.forEach((d) => refsToDelete.push(d.ref));
-
-    // Thực hiện xóa theo từng lô <= 400 thao tác (chống lỗi batch > 500)
-    await deleteRefsInChunks(refsToDelete);
-
-    // 5. Xử lý các hội thoại và tin nhắn liên quan
-    const convSnap = await adminDb
-      .collection("conversations")
-      .where("participantIds", "array-contains", userId)
-      .get();
-
-    const bucket = adminStorage.bucket();
-    for (const doc of convSnap.docs) {
-      const convId = doc.id;
-      try {
-        await adminDb.recursiveDelete(doc.ref);
-      } catch (err) {
-        console.warn(`Lỗi xóa conversation ${convId}:`, err);
-      }
-      try {
-        await bucket.deleteFiles({ prefix: `private/chats/${convId}/`, force: true });
-      } catch {
-        /* Bỏ qua nếu không có file chat */
-      }
-    }
-
-    // 6. Ẩn danh hóa các đánh giá đã gửi (reviewerId: null, reviewerName: 'Người dùng đã xóa')
-    const sentReviewsSnap = await adminDb
-      .collection("reviews")
-      .where("reviewerId", "==", userId)
-      .get();
-
-    for (let i = 0; i < sentReviewsSnap.docs.length; i += 400) {
-      const b = adminDb.batch();
-      sentReviewsSnap.docs.slice(i, i + 400).forEach((d) => {
-        b.update(d.ref, {
-          reviewerName: "Người dùng đã xóa",
-          reviewerId: null,
-        });
-      });
-      await b.commit();
-    }
-
-    // 7. Xóa toàn bộ tệp Cloud Storage cá nhân
     try {
-      await Promise.all([
-        bucket.deleteFiles({ prefix: `private/cards/${userId}/`, force: true }).catch(() => {}),
-        bucket.deleteFiles({ prefix: `public/listings/${userId}/`, force: true }).catch(() => {}),
-        bucket.deleteFiles({ prefix: `public/avatars/${userId}/`, force: true }).catch(() => {}),
-      ]);
-    } catch {
-      // Tiếp tục nếu thư mục storage trống
-    }
-
-    // 8. Xóa tài khoản Firebase Auth (F12: không nuốt lỗi trừ trường hợp user-not-found)
-    try {
-      await adminAuth.deleteUser(userId);
-    } catch (authErr: unknown) {
-      const errCode = (authErr as { code?: string })?.code;
+      await adminAuth.updateUser(userId, { disabled: true });
+      await adminAuth.revokeRefreshTokens(userId);
+    } catch (disableErr: unknown) {
+      const errCode = (disableErr as { code?: string })?.code;
       if (errCode !== "auth/user-not-found") {
-        console.error("Lỗi xóa Auth user:", authErr);
-        return NextResponse.json(
-          { error: "Chưa xóa được tài khoản đăng nhập, vui lòng thử lại." },
-          { status: 500 }
+        throw new HttpError(
+          500,
+          "Không thể khóa tài khoản để bắt đầu quy trình xóa dữ liệu. Vui lòng thử lại sau."
         );
       }
+    }
+
+    try {
+      // 2-8. Gọi hàm purgeUserData idempotent
+      await purgeUserData(userId, studentIdHash);
+    } catch (purgeErr) {
+      console.error("Lỗi trong quá trình purgeUserData:", purgeErr);
+      // Khi tài khoản đã bị vô hiệu hóa và marker pendingDeletions đã ghi:
+      // Trả HTTP 202 Accepted để thông báo yêu cầu đã được chấp nhận và sweeper cron sẽ hoàn tất
+      return NextResponse.json(
+        {
+          success: true,
+          pending: true,
+          message:
+            "Tài khoản đã được vô hiệu hóa an toàn. Quá trình dọn dẹp dữ liệu đang diễn ra và sẽ được hệ thống hoàn tất tự động.",
+        },
+        { status: 202 }
+      );
     }
 
     return NextResponse.json({

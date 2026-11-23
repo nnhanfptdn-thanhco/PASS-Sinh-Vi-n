@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/purge-cards",
       "schedule": "35 17 * * *"
+    },
+    {
+      "path": "/api/cron/purge-accounts",
+      "schedule": "50 17 * * *"
     }
   ]
 }

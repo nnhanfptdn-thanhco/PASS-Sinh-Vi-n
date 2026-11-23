@@ -16,7 +16,11 @@ export const dynamic = "force-dynamic";
 
 const manageListingSchema = z
   .object({
-    listingId: z.string().min(1, "Thiếu listingId"),
+    listingId: z
+      .string()
+      .min(1, "Thiếu listingId")
+      .max(128, "listingId quá dài")
+      .regex(/^[A-Za-z0-9_-]+$/, "listingId không hợp lệ"),
     action: z.enum(["hide", "show", "mark_sold", "renew"]),
   })
   .strict();
@@ -206,12 +210,12 @@ export const POST = withApi(async (req: NextRequest) => {
     }
 
     if (action === "mark_sold") {
-      // Đọc tất cả giữ chỗ còn mở của tin
+      // Đọc tất cả giữ chỗ chờ/danh sách đợi của tin (tin reserved đã bị chặn ở bước validate)
       const openResSnap = await transaction.get(
         adminDb
           .collection("reservations")
           .where("listingId", "==", listingId)
-          .where("status", "in", ["pending", "waitlisted", "confirmed"])
+          .where("status", "in", ["pending", "waitlisted"])
       );
 
       transaction.update(listingRef, {

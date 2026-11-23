@@ -94,9 +94,9 @@ export const POST = withApi(async (req: NextRequest) => {
       }
     });
 
-    // 2. Admin Bootstrap: Tự động gán quyền Admin nếu email nằm trong ADMIN_EMAILS (mặc định nnhanfptdn@gmail.com)
+    // 2. Admin Bootstrap: Tự động gán quyền Admin nếu email nằm trong ADMIN_EMAILS
     let claimsChanged = false;
-    const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "nnhanfptdn@gmail.com";
+    const adminEmailsConfig = process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "";
     const adminEmails = adminEmailsConfig
       .split(",")
       .map((e) => e.trim().toLowerCase())

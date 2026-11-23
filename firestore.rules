@@ -12,24 +12,31 @@ service cloud.firestore {
     }
 
     function isVerified() {
-      return isAuthenticated() && request.auth.token.verified == true;
+      return isAuthenticated() && (
+        request.auth.token.get('verified', false) == true ||
+        request.auth.token.get('studentVerified', false) == true ||
+        request.auth.token.get('role', '') == 'verified'
+      );
     }
 
     function isAdmin() {
       return isAuthenticated() && (
-        request.auth.token.admin == true ||
-        request.auth.token.role == 'admin'
+        request.auth.token.get('admin', false) == true ||
+        request.auth.token.get('role', '') == 'admin'
       );
     }
 
-    // 1. users: Đọc công khai thông tin profile không nhạy cảm; tạo và xóa chỉ máy chủ; update chỉ displayName và photoURL
+    // 1. users: Đọc công khai thông tin profile không nhạy cảm; tạo và xóa chỉ máy chủ; update chỉ photoURL (displayName bắt buộc qua Server API /api/account/profile)
     match /users/{userId} {
       allow read: if true;
       allow create: if false; // Tạo bởi server API bootstrap
       allow update: if (isOwner(userId)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt'])
-          && (!('displayName' in request.resource.data) || (request.resource.data.displayName is string && request.resource.data.displayName.size() >= 2 && request.resource.data.displayName.size() <= 60))
-          && (!('photoURL' in request.resource.data) || request.resource.data.photoURL == null || (request.resource.data.photoURL is string && request.resource.data.photoURL.size() <= 500 && request.resource.data.photoURL.matches('https://.*'))))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoURL', 'updatedAt'])
+          && (!('photoURL' in request.resource.data) || request.resource.data.photoURL == null || (
+              request.resource.data.photoURL is string &&
+              request.resource.data.photoURL.size() <= 500 &&
+              request.resource.data.photoURL.matches('https://(lh3\\.googleusercontent\\.com|firebasestorage\\.googleapis\\.com)/.*')
+          )))
         || isAdmin();
       allow delete: if false; // Xóa qua server API account/delete
     }
@@ -114,7 +121,7 @@ service cloud.firestore {
         request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds ||
         isAdmin()
       );
-      allow create: if isAuthenticated() &&
+      allow create: if isVerified() &&
         request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds &&
         request.resource.data.keys().hasOnly(['senderId', 'text', 'createdAt', 'imagePath']) &&
         request.resource.data.senderId == request.auth.uid &&
@@ -126,27 +133,15 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // 9. favorites & follows: Chống sửa userId, cấm update, giới hạn fields
+    // 9. favorites & follows: Quản lý ghi duy nhất qua Server API (chống desync favoritesCount, spam follow)
     match /favorites/{favId} {
-      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
-      allow create: if isAuthenticated()
-                    && request.auth.uid == request.resource.data.userId
-                    && request.resource.data.keys().hasOnly(['id', 'userId', 'listingId', 'createdAt'])
-                    && request.resource.data.id.size() <= 128
-                    && request.resource.data.createdAt == request.time;
-      allow update: if false;
-      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false;
     }
 
     match /follows/{followId} {
-      allow read: if isAuthenticated() && request.auth.uid == resource.data.followerId;
-      allow create: if isAuthenticated()
-                    && request.auth.uid == request.resource.data.followerId
-                    && request.resource.data.keys().hasOnly(['id', 'followerId', 'followingId', 'createdAt'])
-                    && request.resource.data.id.size() <= 128
-                    && request.resource.data.createdAt == request.time;
-      allow update: if false;
-      allow delete: if isAuthenticated() && request.auth.uid == resource.data.followerId;
+      allow read: if isAuthenticated() && (resource.data.followerId == request.auth.uid || isAdmin());
+      allow write: if false;
     }
 
     // 10. reviews: Ghi qua Server API reviews để kiểm tra deal completed

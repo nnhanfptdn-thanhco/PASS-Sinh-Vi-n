@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { DecodedIdToken } from "firebase-admin/auth";
-import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { adminDb } from "@/lib/firebase/admin";
 import { ApiError } from "@/lib/server/http";
 import { hasAdminClaim } from "@/lib/server/claims";
+import { requireAuth } from "@/lib/server/auth-guard";
 
 export class HttpError extends ApiError {
   constructor(status: number, message: string) {
@@ -13,24 +14,12 @@ export class HttpError extends ApiError {
 
 /**
  * Xác thực Bearer ID Token từ header Authorization.
- * Bắt buộc kiểm tra token có bị thu hồi (checkRevoked = true).
+ * Đã gộp với requireAuth làm Single Source of Truth: Bắt buộc kiểm tra token có bị thu hồi (checkRevoked = true).
+ * Lỗi lạ không xác định mặc định trả 503 thay vì 401.
  */
 export async function requireUser(req: NextRequest): Promise<DecodedIdToken> {
-  const authHeader = req.headers.get("authorization") ?? "";
-  const match = /^Bearer (.+)$/i.exec(authHeader);
-  if (!match) {
-    throw new HttpError(401, "Vui lòng đăng nhập.");
-  }
-  try {
-    // checkRevoked = true: token bị thu hồi / tài khoản bị disable PHẢI bị từ chối
-    return await adminAuth.verifyIdToken(match[1], true);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "";
-    if (msg.includes("revoked") || msg.includes("disabled")) {
-      throw new HttpError(401, "Phiên đăng nhập đã bị thu hồi hoặc tài khoản bị vô hiệu hóa.");
-    }
-    throw new HttpError(401, "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
-  }
+  const auth = await requireAuth(req);
+  return auth.token;
 }
 
 export interface ApprovedStudentResult {

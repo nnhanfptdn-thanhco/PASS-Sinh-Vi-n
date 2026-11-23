@@ -174,17 +174,30 @@ export const POST = withApi(async (req: NextRequest) => {
           createdAt: FieldValue.serverTimestamp(),
         });
       }
+      const purgeDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       tx.update(verificationRef, {
         status: "approved",
         approvedAt: FieldValue.serverTimestamp(),
         decidedAt: FieldValue.serverTimestamp(),
+        cardPurgeAt: purgeDate,
         updatedAt: FieldValue.serverTimestamp(),
         approvedBy: adminEmail,
         rejectReason: null,
         rejectNote: null,
         claimsSyncPending: true, // bootstrap/cron sẽ đồng bộ lại nếu bước claims phía dưới thất bại
       });
-      tx.set(userRef, { verified: true, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      tx.set(
+        userRef,
+        {
+          verified: true,
+          schoolCode: v.schoolCode ?? null,
+          schoolName: v.schoolName ?? null,
+          campusId: v.campusId ?? null,
+          isGraduating: Boolean(v.isGraduating),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
       tx.set(adminDb.collection("notifications").doc(), {
         userId,
         type: "verification_result",
@@ -232,10 +245,12 @@ export const POST = withApi(async (req: NextRequest) => {
     const isDataUrl = !!p && p.startsWith("data:image/");
     const isStoragePath = !!p && p.startsWith(`private/cards/${userId}/`);
 
+    const purgeDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     tx.update(verificationRef, {
       status: "rejected",
       rejectedAt: FieldValue.serverTimestamp(),
       decidedAt: FieldValue.serverTimestamp(),
+      cardPurgeAt: purgeDate,
       updatedAt: FieldValue.serverTimestamp(),
       rejectedBy: adminEmail,
       rejectReason: cleanReason,
@@ -245,11 +260,22 @@ export const POST = withApi(async (req: NextRequest) => {
             cardStoragePath: null, // xóa NGAY ảnh Data URL (PDP 2025)
             cardDeleted: true,
             cardAutoDeletedAt: FieldValue.serverTimestamp(),
+            cardPurgeAt: FieldValue.delete(),
           }
         : {}),
       ...(isStoragePath ? { cardDeletePending: true } : {}), // đánh dấu để cron thử lại nếu xóa Storage lỗi
     });
-    tx.set(userRef, { verified: false, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    tx.set(
+      userRef,
+      {
+        verified: false,
+        schoolCode: FieldValue.delete(),
+        schoolName: FieldValue.delete(),
+        campusId: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
     tx.set(adminDb.collection("notifications").doc(), {
       userId,
       type: "verification_result",
@@ -279,6 +305,7 @@ export const POST = withApi(async (req: NextRequest) => {
         cardDeleted: true,
         cardStoragePath: null,
         cardDeletePending: FieldValue.delete(),
+        cardPurgeAt: FieldValue.delete(),
         cardAutoDeletedAt: FieldValue.serverTimestamp(),
       });
     } catch (e) {

@@ -12,14 +12,16 @@ service firebase.storage {
 
     function isAdmin() {
       return isAuthenticated() && (
-        request.auth.token.admin == true ||
-        request.auth.token.role == 'admin'
+        request.auth.token.get('admin', false) == true ||
+        request.auth.token.get('role', '') == 'admin'
       );
     }
 
     function isVerified() {
       return isAuthenticated() && (
-        request.auth.token.verified == true ||
+        request.auth.token.get('verified', false) == true ||
+        request.auth.token.get('studentVerified', false) == true ||
+        request.auth.token.get('role', '') == 'verified' ||
         isAdmin()
       );
     }
@@ -53,11 +55,11 @@ service firebase.storage {
       allow delete: if isAdmin() || (isOwner(userId) && isVerified());
     }
 
-    // 3. Ảnh đại diện người dùng: Tên file cố định avatar.webp, tối đa 2MB, chỉ chủ tài khoản
+    // 3. Ảnh đại diện người dùng: Tên file cố định avatar.webp, tối đa 2MB, chỉ chủ tài khoản đã xác minh
     match /public/avatars/{userId}/{fileName} {
       allow read: if true;
-      allow create, update: if isOwner(userId) && isValidImage(2 * 1024 * 1024) && fileName == 'avatar.webp';
-      allow delete: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) && isVerified() && isValidImage(2 * 1024 * 1024) && fileName == 'avatar.webp';
+      allow delete: if (isOwner(userId) && isVerified()) || isAdmin();
     }
 
     // 4. Ảnh đính kèm trong tin nhắn chat: ≤3MB, tên file đúng mẫu, cấm update, chỉ xóa bởi Admin

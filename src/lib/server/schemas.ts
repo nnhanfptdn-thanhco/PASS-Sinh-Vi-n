@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { containsContactInfo } from "@/lib/utils/contact-filter";
+import { todayVN, addDaysVN } from "@/lib/utils/date";
 
 /**
  * Kiểm tra xem văn bản công khai có chứa thông tin liên hệ không
@@ -41,7 +42,21 @@ export const createListingSchema = z
     urgentPass: z.boolean().optional().default(false),
     passDeadline: z
       .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "Hạn pass phải theo định dạng YYYY-MM-DD"),
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Hạn pass phải theo định dạng YYYY-MM-DD")
+      .refine((val) => {
+        const [y, m, d] = val.split("-").map(Number);
+        const dt = new Date(Date.UTC(y, m - 1, d));
+        return (
+          dt.getUTCFullYear() === y &&
+          dt.getUTCMonth() === m - 1 &&
+          dt.getUTCDate() === d
+        );
+      }, "Hạn pass không phải là ngày hợp lệ trên lịch")
+      .refine((val) => {
+        const today = todayVN();
+        const maxDeadline = addDaysVN(today, 60);
+        return val >= today && val <= maxDeadline;
+      }, "Hạn pass phải nằm trong khoảng từ hôm nay đến tối đa 60 ngày tới"),
     schoolCode: z.string().optional(),
     campusId: z.string().optional(),
     provinceCode: z.string().optional(),
@@ -64,10 +79,10 @@ export const createListingSchema = z
       .nullable()
       .optional(),
     images: z
-      .array(z.string().max(500000))
+      .array(z.string().max(2048, "Đường dẫn ảnh quá dài"))
       .min(1, "Vui lòng tải tối thiểu 1 ảnh thực tế")
       .max(10, "Tối đa 10 ảnh"),
-    thumbs: z.array(z.string().max(500000)).max(10).optional(),
+    thumbs: z.array(z.string().max(2048, "Đường dẫn thumbnail quá dài")).max(10).optional(),
   })
   .strict();
 
@@ -85,7 +100,12 @@ export const submitVerificationSchema = z
     campusId: z.string().max(64).optional(),
     faculty: z.string().max(100).optional(),
     studentClass: z.string().max(50).optional(),
-    studentId: z.string().trim().min(4, "Mã số sinh viên không hợp lệ").max(32, "Mã số sinh viên quá dài"),
+    studentId: z
+      .string()
+      .trim()
+      .min(4, "Mã số sinh viên không hợp lệ")
+      .max(32, "Mã số sinh viên quá dài")
+      .regex(/^[A-Za-z0-9\-_./\s]{4,32}$/, "Mã số sinh viên chỉ chứa chữ cái, chữ số và ký tự hợp lệ"),
     zaloPhone: z
       .string()
       .regex(/^(0|\+84)[35789][0-9]{8}$/, "Số điện thoại Zalo không hợp lệ"),
@@ -98,6 +118,10 @@ export const submitVerificationSchema = z
     wardCode: z.string().max(32).optional(),
     dormOrAddress: z.string().max(200).optional(),
     isGraduating: z.boolean().optional(),
-    cardStoragePath: z.string().min(1, "Thiếu đường dẫn tệp ảnh thẻ").max(500000, "Dữ liệu ảnh thẻ quá lớn"),
+    cardStoragePath: z
+      .string()
+      .min(1, "Thiếu đường dẫn tệp ảnh thẻ")
+      .max(256, "Đường dẫn tệp ảnh thẻ quá dài")
+      .regex(/^private\/cards\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]{4,64}\.(webp|jpg)$/, "Đường dẫn tệp ảnh thẻ không hợp lệ"),
   })
   .strict();

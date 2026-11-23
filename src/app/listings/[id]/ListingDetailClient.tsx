@@ -377,19 +377,8 @@ export function ListingDetailClient({
                 {isReserved ? "Đã Có Người Giữ Chỗ" : "Giữ Chỗ Món Đồ Này"}
               </Button>
 
-              {/* Khối Hiện liên hệ Zalo / SĐT có bảo mật */}
-              {!sellerContact ? (
-                <Button
-                  variant="outline"
-                  size="md"
-                  className="w-full"
-                  leftIcon={<Phone className="w-4 h-4" />}
-                  isLoading={isLoadingContact}
-                  onClick={handleRevealContact}
-                >
-                  Hiện Số Zalo / Điện Thoại
-                </Button>
-              ) : (
+              {/* Theo Phương án A: SĐT & Zalo được bảo mật, chỉ mở khi người bán xác nhận giữ chỗ */}
+              {sellerContact ? (
                 <div className="p-3 bg-surface rounded-xl border border-primary/40 space-y-1.5 text-xs">
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-text-secondary">Số Zalo liên hệ:</span>
@@ -409,6 +398,27 @@ export function ListingDetailClient({
                       <span className="text-text-main">{sellerContact.exactAddress}</span>
                     </div>
                   )}
+                </div>
+              ) : isReserved ? (
+                <Button
+                  variant="outline"
+                  size="md"
+                  className="w-full"
+                  leftIcon={<Phone className="w-4 h-4" />}
+                  isLoading={isLoadingContact}
+                  onClick={handleRevealContact}
+                >
+                  Xem Liên Hệ (Dành Cho Người Mua Đã Xác Nhận)
+                </Button>
+              ) : (
+                <div className="p-3 bg-surface-muted/60 rounded-xl border border-surface-border text-center space-y-1">
+                  <p className="text-xs text-text-secondary font-medium flex items-center justify-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 text-text-muted" />
+                    <span>Số Zalo / Điện thoại được bảo mật</span>
+                  </p>
+                  <p className="text-[11px] text-text-muted">
+                    Bấm &quot;Giữ Chỗ Món Đồ Này&quot; để kết nối. Thông tin liên hệ và địa chỉ sẽ tự động mở khi người bán xác nhận giữ chỗ cho bạn.
+                  </p>
                 </div>
               )}
 

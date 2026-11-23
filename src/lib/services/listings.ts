@@ -478,6 +478,17 @@ export async function searchListings(
     currentAfter = lastDocSnap;
   }
 
+  // Sắp xếp lại in-memory nếu fallback không dùng compound index
+  if (!useCompound) {
+    if (sortMode === "price_asc") {
+      matchedItems.sort((a, b) => a.price - b.price);
+    } else if (sortMode === "price_desc") {
+      matchedItems.sort((a, b) => b.price - a.price);
+    } else if (sortMode === "newest") {
+      matchedItems.sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
+    }
+  }
+
   // Sắp xếp relevant nếu có thông tin trường/vùng người xem
   if (sortMode === "relevant" && (params.viewerSchool || params.viewerProvince)) {
     matchedItems.sort((a, b) => {

@@ -105,7 +105,15 @@ export { FieldValue, Timestamp } from "firebase-admin/firestore";
  * Tuyệt đối không gửi mã gốc hay tính ở Client để chống đảo ngược.
  */
 export function computeStudentIdHash(schoolCode: string, studentId: string): string {
-  const secret = process.env.STUDENT_ID_HMAC_SECRET || "production-cho-pass-sv-secret-key-32-chars-salt!!";
-  const normalizedInput = `${schoolCode.trim().toUpperCase()}:${studentId.trim().toUpperCase()}`;
-  return crypto.createHmac("sha256", secret).update(normalizedInput).digest("hex");
+  const secret = process.env.STUDENT_ID_HMAC_SECRET;
+  if (!secret && process.env.NODE_ENV === "production" && process.env.NEXT_PHASE !== "phase-production-build") {
+    throw new Error("LỖI BẢO MẬT: STUDENT_ID_HMAC_SECRET chưa được cấu hình ở môi trường production.");
+  }
+  const effectiveSecret = secret || "dev-fallback-cho-pass-sv-secret-key-32-chars!!";
+  // Chuẩn hóa NFKC triệt để: chống ký tự full-width, homoglyph, loại bỏ toàn bộ khoảng trắng và ký tự đặc biệt
+  const norm = (s: string) => (s || "").normalize("NFKC").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const cleanSchool = norm(schoolCode);
+  const cleanId = norm(studentId);
+  const normalizedInput = `${cleanSchool}:${cleanId}`;
+  return crypto.createHmac("sha256", effectiveSecret).update(normalizedInput).digest("hex");
 }

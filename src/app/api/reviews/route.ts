@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/server/auth-guard";
 import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import { containsContactInfo } from "@/lib/utils/contact-filter";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -19,10 +20,18 @@ const reviewSchema = z
 export const POST = withApi(async (req: NextRequest) => {
   const auth = await requireAuth(req);
   const reviewerId = auth.uid;
-  const reviewerName = auth.name || "Sinh viên";
 
   const body = await readJson(req);
   const { reservationId, rating, comment } = reviewSchema.parse(body);
+
+  const trimmedComment = comment?.trim() || "";
+  if (trimmedComment && containsContactInfo(trimmedComment)) {
+    throw new ApiError(
+      400,
+      "CONTACT_INFO_FORBIDDEN",
+      "Nội dung đánh giá không được chứa số điện thoại, Zalo hoặc liên kết liên hệ bên ngoài."
+    );
+  }
 
   // 1. Kiểm tra giao dịch đã hoàn tất chưa
   const resSnap = await adminDb.collection("reservations").doc(reservationId).get();
@@ -75,12 +84,21 @@ export const POST = withApi(async (req: NextRequest) => {
   // 2. Định danh duy nhất `${reservationId}_${reviewerId}` & cập nhật rating nguyên tử qua Transaction (F14)
   const reviewRef = adminDb.collection("reviews").doc(`${reservationId}_${reviewerId}`);
   const targetRef = adminDb.collection("users").doc(targetUserId);
+  const reviewerRef = adminDb.collection("users").doc(reviewerId);
 
   await adminDb.runTransaction(async (tx) => {
-    const [rSnap, tSnap] = await Promise.all([tx.get(reviewRef), tx.get(targetRef)]);
+    const [rSnap, tSnap, revSnap] = await Promise.all([
+      tx.get(reviewRef),
+      tx.get(targetRef),
+      tx.get(reviewerRef),
+    ]);
+
     if (rSnap.exists) {
       throw new ApiError(409, "ALREADY_REVIEWED", "Bạn đã gửi đánh giá cho giao dịch này rồi.");
     }
+
+    const reviewerDisplayName =
+      (revSnap.data()?.displayName as string | undefined)?.trim() || "Sinh viên";
 
     const t = tSnap.data() ?? {};
     const count = (Number(t.reviewsCount) || 0) + 1;
@@ -93,10 +111,10 @@ export const POST = withApi(async (req: NextRequest) => {
       reservationId,
       listingId: resData?.listingId,
       reviewerId,
-      reviewerName,
+      reviewerName: reviewerDisplayName,
       targetUserId,
       rating,
-      comment: comment?.trim() || "",
+      comment: trimmedComment,
       createdAt: FieldValue.serverTimestamp(),
     });
 

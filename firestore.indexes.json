@@ -156,7 +156,41 @@
         { "fieldPath": "targetUserId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "verifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "cardPurgeAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "favorites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "conversations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participantIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "rateLimits",
+      "fieldPath": "windowExpiresAt",
+      "ttl": true
+    },
+    {
+      "collectionGroup": "idempotency",
+      "fieldPath": "expiresAt",
+      "ttl": true
+    }
+  ]
 }

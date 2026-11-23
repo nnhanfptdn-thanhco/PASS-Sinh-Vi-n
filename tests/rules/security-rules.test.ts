@@ -5,7 +5,7 @@ import {
   assertSucceeds,
 } from "@firebase/rules-unit-testing";
 import { setupTestEnvironment, getUserContext, getUnauthContext } from "./helpers";
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, deleteField } from "firebase/firestore";
 import { ref, uploadBytes, deleteObject, getBytes, updateMetadata } from "firebase/storage";
 
 describe("Firebase Security Rules (Firestore & Storage)", () => {
@@ -109,15 +109,23 @@ describe("Firebase Security Rules (Firestore & Storage)", () => {
     });
 
     it("User B không được upload avatar của User A", async () => {
-      const ctxB = getUserContext(env, "user_b");
+      const ctxB = getUserContext(env, "user_b", { verified: true });
       const fileRef = ref(ctxB.storage(), "public/avatars/user_a/avatar.webp");
       await assertFails(
         uploadBytes(fileRef, new Uint8Array([1]), { contentType: "image/webp" })
       );
     });
 
-    it("User A được upload avatar của chính mình", async () => {
-      const ctxA = getUserContext(env, "user_a");
+    it("User chưa verified không được upload avatar", async () => {
+      const ctxA = getUserContext(env, "user_a", { verified: false });
+      const fileRef = ref(ctxA.storage(), "public/avatars/user_a/avatar.webp");
+      await assertFails(
+        uploadBytes(fileRef, new Uint8Array([1]), { contentType: "image/webp" })
+      );
+    });
+
+    it("User A đã verified được upload avatar của chính mình", async () => {
+      const ctxA = getUserContext(env, "user_a", { verified: true });
       const fileRef = ref(ctxA.storage(), "public/avatars/user_a/avatar.webp");
       await assertSucceeds(
         uploadBytes(fileRef, new Uint8Array([1]), { contentType: "image/webp" })
@@ -125,8 +133,8 @@ describe("Firebase Security Rules (Firestore & Storage)", () => {
     });
   });
 
-  describe("3. Firestore Rules - Favorites & Follows", () => {
-    it("Không thể tạo favorite với userId của người khác", async () => {
+  describe("3. Firestore Rules - Favorites & Follows (Server-Only Writes)", () => {
+    it("Client bị cấm tạo favorite trực tiếp (phải qua Server API /api/favorites/toggle)", async () => {
       const ctxA = getUserContext(env, "user_a");
       const dbA = ctxA.firestore();
       const favRef = doc(dbA, "favorites", "fav_1");
@@ -134,14 +142,14 @@ describe("Firebase Security Rules (Firestore & Storage)", () => {
       await assertFails(
         setDoc(favRef, {
           id: "fav_1",
-          userId: "user_b", // Khác auth.uid
+          userId: "user_a",
           listingId: "listing_123",
           createdAt: serverTimestamp(),
         })
       );
     });
 
-    it("Không thể update đổi userId trong favorite", async () => {
+    it("Client bị cấm xóa favorite trực tiếp (phải qua Server API)", async () => {
       await env.withSecurityRulesDisabled(async (context) => {
         const favRef = doc(context.firestore(), "favorites", "fav_1");
         await setDoc(favRef, {
@@ -156,29 +164,8 @@ describe("Firebase Security Rules (Firestore & Storage)", () => {
       const dbA = ctxA.firestore();
       const favRef = doc(dbA, "favorites", "fav_1");
 
-      // Cấm update hoàn toàn
-      await assertFails(
-        updateDoc(favRef, {
-          userId: "user_b",
-        })
-      );
-    });
-
-    it("Chủ sở hữu được tạo và xóa favorite hợp lệ", async () => {
-      const ctxA = getUserContext(env, "user_a");
-      const dbA = ctxA.firestore();
-      const favRef = doc(dbA, "favorites", "fav_1");
-
-      await assertSucceeds(
-        setDoc(favRef, {
-          id: "fav_1",
-          userId: "user_a",
-          listingId: "listing_123",
-          createdAt: serverTimestamp(),
-        })
-      );
-
-      await assertSucceeds(deleteDoc(favRef));
+      // Cấm xóa trực tiếp
+      await assertFails(deleteDoc(favRef));
     });
 
     it("User B không được đọc verifications hoặc usersPrivate của User A", async () => {
@@ -214,8 +201,50 @@ describe("Firebase Security Rules (Firestore & Storage)", () => {
       await assertFails(updateDoc(userRefA, { verified: true }));
       // Thử chèn studentIdHash -> FAILS
       await assertFails(updateDoc(userRefA, { studentIdHash: "fake_hash" }));
-      // Cập nhật displayName hợp lệ (2-60 ký tự) -> SUCCEEDS
-      await assertSucceeds(updateDoc(userRefA, { displayName: "User A Updated" }));
+      // Thử xóa trường displayName bằng deleteField() -> FAILS
+      await assertFails(updateDoc(userRefA, { displayName: deleteField() }));
+      // Thử cập nhật photoURL từ domain độc hại / lạ -> FAILS
+      await assertFails(updateDoc(userRefA, { photoURL: "https://evil.com/malicious.jpg" }));
+      // Thử cập nhật displayName trực tiếp từ client -> FAILS (bắt buộc qua Server API /api/account/profile)
+      await assertFails(updateDoc(userRefA, { displayName: "User A Updated" }));
+      // Cập nhật photoURL từ Google Photos hoặc Firebase Storage hợp lệ -> SUCCEEDS
+      await assertSucceeds(
+        updateDoc(userRefA, {
+          photoURL: "https://lh3.googleusercontent.com/a/valid-avatar-1234",
+        })
+      );
+    });
+
+    it("Tin nhắn trong hội thoại: chỉ thành viên đã xác minh mới được gửi tin nhắn", async () => {
+      // Seed cuộc hội thoại giữa user_a và user_b
+      await env.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), "conversations", "conv_123"), {
+          participantIds: ["user_a", "user_b"],
+          updatedAt: new Date(),
+        });
+      });
+
+      // User A chưa verified -> Gửi tin nhắn FAILS
+      const ctxUnverified = getUserContext(env, "user_a", { verified: false });
+      const msgRefUnverified = doc(ctxUnverified.firestore(), "conversations", "conv_123", "messages", "msg_1");
+      await assertFails(
+        setDoc(msgRefUnverified, {
+          senderId: "user_a",
+          text: "Xin chào bạn",
+          createdAt: serverTimestamp(),
+        })
+      );
+
+      // User A đã verified -> Gửi tin nhắn SUCCEEDS
+      const ctxVerified = getUserContext(env, "user_a", { verified: true });
+      const msgRefVerified = doc(ctxVerified.firestore(), "conversations", "conv_123", "messages", "msg_2");
+      await assertSucceeds(
+        setDoc(msgRefVerified, {
+          senderId: "user_a",
+          text: "Xin chào bạn",
+          createdAt: serverTimestamp(),
+        })
+      );
     });
 
     it("User B không được đọc listingsPrivate của User A khi chưa chốt giữ chỗ", async () => {
