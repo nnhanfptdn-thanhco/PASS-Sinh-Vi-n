@@ -3,7 +3,8 @@ import { z } from "zod";
 import { requireActiveUser, requireApprovedStudent } from "@/lib/server/auth-guard";
 import { withApi, readJson, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
-import { adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
+import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import { getStorageObjectMetadata } from "@/lib/server/storage-provider";
 import { UPLOAD_POLICIES, type UploadKind } from "@/lib/server/uploads";
 
 export const runtime = "nodejs";
@@ -88,21 +89,18 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
-  const bucket = adminStorage.bucket();
   const verifiedFiles: Array<{ path: string; sizeBytes: number; contentType: string }> = [];
   let totalVerifiedBytes = 0;
 
   for (const path of uniquePaths) {
     try {
-      const file = bucket.file(path);
-      const [exists] = await file.exists();
-      if (!exists) {
+      const meta = await getStorageObjectMetadata(path);
+      if (!meta.exists) {
         throw new ApiError(400, "UPLOAD_FILE_MISSING", "Tệp ảnh chưa được tải lên Storage hoàn tất.");
       }
-      const [meta] = await file.getMetadata();
-      const contentType = String(meta.contentType || "");
-      const sizeBytes = Number(meta.size || 0);
-      const customSessionId = (meta.metadata as Record<string, string> | undefined)?.sessionId;
+      const contentType = meta.contentType;
+      const sizeBytes = meta.sizeBytes;
+      const customSessionId = meta.sessionId;
 
       if (!/^image\/(webp|jpeg)$/.test(contentType)) {
         throw new ApiError(400, "INVALID_UPLOAD_CONTENT_TYPE", "Định dạng ảnh trên Storage không hợp lệ.");

@@ -5,6 +5,7 @@ import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { createListingSchema } from "@/lib/server/schemas";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import { isAllowedCloudinaryPublicUrl } from "@/lib/server/storage-provider";
 import { normalizeVi, buildSearchTokens } from "@/lib/search/normalize";
 import { containsContactInfo } from "@/lib/utils/contact-filter";
 import { toPublicListingDTO } from "@/lib/services/listings";
@@ -105,10 +106,16 @@ export const POST = withApi(async (req: NextRequest) => {
     if (!url || typeof url !== "string") return false;
     if (url.startsWith("data:image/")) return false;
 
+    const expectedObjRe = new RegExp(
+      `^public/listings/${uid}/[A-Za-z0-9_-]{4,64}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`
+    );
+
     if (url.startsWith(`public/listings/${uid}/`)) {
-      return new RegExp(
-        `^public/listings/${uid}/[A-Za-z0-9_-]{4,64}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`
-      ).test(url);
+      return expectedObjRe.test(url);
+    }
+
+    if (isAllowedCloudinaryPublicUrl(url, expectedObjRe)) {
+      return true;
     }
 
     try {
@@ -119,9 +126,7 @@ export const POST = withApi(async (req: NextRequest) => {
       const m = /^\/v0\/b\/([^/]+)\/o\/(.+)$/.exec(u.pathname);
       if (!m || (ALLOWED_BUCKETS.size > 0 && !ALLOWED_BUCKETS.has(m[1]))) return false;
       const objectPath = decodeURIComponent(m[2]);
-      return new RegExp(
-        `^public/listings/${uid}/[A-Za-z0-9_-]{4,64}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`
-      ).test(objectPath);
+      return expectedObjRe.test(objectPath);
     } catch {
       return false;
     }

@@ -4,7 +4,8 @@ import { withApi, ApiError } from "@/lib/server/http";
 import { assertAdminSdkReady } from "@/lib/server/admin-ready";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { isValidFirestoreId, rejectDuplicateQueryParams } from "@/lib/server/request-utils";
-import { adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
+import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import { getSignedStorageReadUrl } from "@/lib/server/storage-provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,18 +42,17 @@ export const GET = withApi(async (req: NextRequest) => {
     url = path; // 1 ảnh ≤ 500KB, an toàn với giới hạn response của Vercel
   } else if (path.startsWith(`private/cards/${userId}/`)) {
     try {
-      const [signed] = await adminStorage.bucket().file(path).getSignedUrl({
-        version: "v4",
-        action: "read",
-        expires: Date.now() + 5 * 60 * 1000,
-      });
+      const signed = await getSignedStorageReadUrl(path, 5 * 60 * 1000);
+      if (!signed) {
+        throw new Error("EMPTY_SIGNED_URL");
+      }
       url = signed;
     } catch (e) {
       console.error("[ADMIN_CARD] sign failed", e instanceof Error ? e.message : "unknown");
       throw new ApiError(
         502,
         "CARD_SIGN_FAILED",
-        "Không tạo được liên kết xem ảnh (kiểm tra quyền iam.serviceAccounts.signBlob / private key của Service Account)."
+        "Không tạo được liên kết xem ảnh (kiểm tra cấu hình Cloudinary hoặc quyền Service Account Storage)."
       );
     }
   } else {

@@ -5,6 +5,10 @@ import { withApi, readJson, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
 import { FIRESTORE_ID_SCHEMA } from "@/lib/server/schemas";
+import {
+  createUploadDescriptor,
+  getActiveStorageProvider,
+} from "@/lib/server/storage-provider";
 import { todayVN } from "@/lib/utils/date";
 import {
   buildUploadSessionPlan,
@@ -283,13 +287,23 @@ export const POST = withApi(async (req: NextRequest) => {
         { merge: true }
       );
 
+      const signedFiles = plan.issuedFiles.map((f) => ({
+        ...f,
+        upload: createUploadDescriptor({
+          storagePath: f.path,
+          kind,
+          sessionId,
+        }),
+      }));
+
       return {
         sessionId,
         kind,
+        provider: getActiveStorageProvider(),
         targetId: plan.targetId,
         prefix: plan.prefix,
         expiresAt: expiresAt.toISOString(),
-        files: plan.issuedFiles,
+        files: signedFiles,
       };
     });
 

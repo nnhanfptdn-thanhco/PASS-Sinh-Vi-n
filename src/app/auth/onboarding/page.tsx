@@ -3,8 +3,8 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthContext";
-import { storage, authFetch } from "@/lib/firebase/client";
-import { ref, uploadBytesResumable } from "firebase/storage";
+import { authFetch } from "@/lib/firebase/client";
+import { uploadMediaBlobWithTimeout, type IssuedIntentFile } from "@/lib/client/upload-media";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -26,7 +26,7 @@ import universitiesData from "../../../../data/universities_vietnam.json";
 import provincesData from "../../../../data/provinces_34.json";
 import wardsData from "../../../../data/communes_wards.json";
 
-const UPLOAD_TIMEOUT_MS = 15_000;
+const UPLOAD_TIMEOUT_MS = 20_000;
 const API_TIMEOUT_MS = 20_000;
 
 function extractApiError(json: unknown, status: number): string {
@@ -47,32 +47,6 @@ function extractApiError(json: unknown, status: number): string {
 
 function normalizePhoneInput(raw: string): string {
   return raw.replace(/[\s.-]+/g, "").trim();
-}
-
-/** Upload có timeout THỰC SỰ: hết giờ thì hủy task, không để file mồ côi chạy ngầm. */
-function uploadWithTimeout(
-  path: string,
-  blob: Blob,
-  contentType: string,
-  sessionId: string,
-  ms: number
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const task = uploadBytesResumable(ref(storage, path), blob, {
-      contentType,
-      customMetadata: { sessionId },
-    });
-    const timer = setTimeout(() => {
-      task.cancel();
-      reject(new Error("Quá thời gian tải ảnh thẻ lên lưu trữ. Vui lòng thử lại với mạng ổn định hơn."));
-    }, ms);
-    task.on(
-      "state_changed",
-      undefined,
-      (err) => { clearTimeout(timer); reject(err); },
-      () => { clearTimeout(timer); resolve(); }
-    );
-  });
 }
 
 function OnboardingContent() {
@@ -229,12 +203,19 @@ function OnboardingContent() {
       }
 
       const sessionId = String(intentJson.sessionId);
-      const cardStoragePath = String(intentJson.files[0].path);
+      const issuedCardFile = intentJson.files[0] as IssuedIntentFile;
+      const cardStoragePath = String(issuedCardFile.path);
       uploadedSessionId = sessionId;
       uploadedCardPath = cardStoragePath;
 
       try {
-        await uploadWithTimeout(cardStoragePath, cardImageBlob, mime, sessionId, UPLOAD_TIMEOUT_MS);
+        await uploadMediaBlobWithTimeout({
+          file: issuedCardFile,
+          blob: cardImageBlob,
+          contentType: mime,
+          sessionId,
+          timeoutMs: UPLOAD_TIMEOUT_MS,
+        });
         const finalizeRes = await authFetch("/api/uploads/finalize", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

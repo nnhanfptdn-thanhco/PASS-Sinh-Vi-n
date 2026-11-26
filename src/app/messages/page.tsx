@@ -13,7 +13,6 @@ import {
   where,
   type Timestamp,
 } from "firebase/firestore";
-import { ref, uploadBytesResumable } from "firebase/storage";
 import {
   Send,
   Search,
@@ -35,7 +34,8 @@ import { RequireVerified } from "@/components/auth/RequireVerified";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
-import { db, storage, authFetch } from "@/lib/firebase/client";
+import { db, authFetch } from "@/lib/firebase/client";
+import { uploadMediaBlobWithTimeout, type IssuedIntentFile } from "@/lib/client/upload-media";
 import { compressListingImage } from "@/lib/image/compress";
 import { formatCurrencyVND, safeRandomId } from "@/lib/utils";
 import {
@@ -629,29 +629,15 @@ function MessagesContent() {
       }
 
       sessionId = String(intentJson.sessionId);
-      issuedPath = String(intentJson.files[0].path);
+      const issuedChatFile = intentJson.files[0] as IssuedIntentFile;
+      issuedPath = String(issuedChatFile.path);
 
-      await new Promise<void>((resolve, reject) => {
-        const task = uploadBytesResumable(ref(storage, issuedPath), compressed.blob, {
-          contentType: mimeType,
-          customMetadata: { sessionId },
-        });
-        const timer = setTimeout(() => {
-          task.cancel();
-          reject(new Error("Quá thời gian tải ảnh đính kèm."));
-        }, 15_000);
-        task.on(
-          "state_changed",
-          undefined,
-          (err) => {
-            clearTimeout(timer);
-            reject(err);
-          },
-          () => {
-            clearTimeout(timer);
-            resolve();
-          }
-        );
+      await uploadMediaBlobWithTimeout({
+        file: issuedChatFile,
+        blob: compressed.blob,
+        contentType: mimeType,
+        sessionId,
+        timeoutMs: 20_000,
       });
 
       const finalizeRes = await authFetch("/api/uploads/finalize", {

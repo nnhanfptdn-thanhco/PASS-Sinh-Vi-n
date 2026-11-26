@@ -28,8 +28,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { RequireVerified } from "@/components/auth/RequireVerified";
-import { storage, authFetch } from "@/lib/firebase/client";
-import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
+import { authFetch } from "@/lib/firebase/client";
+import { uploadMediaBlobWithTimeout, type IssuedIntentFile } from "@/lib/client/upload-media";
 import { compressListingImage } from "@/lib/image/compress";
 import { safeRandomId } from "@/lib/utils";
 import { todayVN, addDaysVN } from "@/lib/utils/date";
@@ -47,39 +47,7 @@ interface UploadedImageItem {
   error?: string;
 }
 
-const LISTING_UPLOAD_TIMEOUT_MS = 15_000;
-
-function uploadListingBlobWithTimeout(
-  path: string,
-  blob: Blob,
-  contentType: string,
-  sessionId: string,
-  ms: number
-): Promise<ReturnType<typeof ref>> {
-  return new Promise((resolve, reject) => {
-    const fileRef = ref(storage, path);
-    const task = uploadBytesResumable(fileRef, blob, {
-      contentType,
-      customMetadata: { sessionId },
-    });
-    const timer = setTimeout(() => {
-      task.cancel();
-      reject(new Error("Quá thời gian tải ảnh lên hệ thống. Đã hủy phiên tải này."));
-    }, ms);
-    task.on(
-      "state_changed",
-      undefined,
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-      () => {
-        clearTimeout(timer);
-        resolve(task.snapshot.ref);
-      }
-    );
-  });
-}
+const LISTING_UPLOAD_TIMEOUT_MS = 20_000;
 
 // Tạo ảnh thumbnail 320px phía client, tự động fallback sang image/jpeg trên Safari iOS/iPadOS
 // (Safari không hỗ trợ canvas.toBlob("image/webp") và sẽ trả về image/png nếu không fallback)
@@ -298,32 +266,38 @@ export default function NewListingPage() {
           throw new Error(intentJson?.error || "Không thể cấp quyền tải ảnh. Vui lòng kiểm tra hạn mức.");
         }
 
-        const issuedMainPath = String(intentJson.files[0].path);
-        const issuedThumbPath = String(intentJson.files[1].path);
+        const issuedMainFile = intentJson.files[0] as IssuedIntentFile;
+        const issuedThumbFile = intentJson.files[1] as IssuedIntentFile;
+        const issuedMainPath = String(issuedMainFile.path);
+        const issuedThumbPath = String(issuedThumbFile.path);
         const uploadedPaths: string[] = [];
 
         setImageItems((prev) => prev.map((it) => (it.id === localId ? { ...it, progress: 50 } : it)));
 
-        let mainRef: ReturnType<typeof ref>;
-        let thumbRef: ReturnType<typeof ref>;
+        let mainUrl = "";
+        let thumbUrl = "";
         try {
-          mainRef = await uploadListingBlobWithTimeout(
-            issuedMainPath,
-            compressed.blob,
+          const mainUpload = await uploadMediaBlobWithTimeout({
+            file: issuedMainFile,
+            blob: compressed.blob,
             contentType,
-            draftId,
-            LISTING_UPLOAD_TIMEOUT_MS
-          );
+            sessionId: draftId,
+            timeoutMs: LISTING_UPLOAD_TIMEOUT_MS,
+            needPublicUrl: true,
+          });
           uploadedPaths.push(issuedMainPath);
+          mainUrl = mainUpload.publicUrl || "";
 
-          thumbRef = await uploadListingBlobWithTimeout(
-            issuedThumbPath,
-            thumb.blob,
-            thumb.contentType,
-            draftId,
-            LISTING_UPLOAD_TIMEOUT_MS
-          );
+          const thumbUpload = await uploadMediaBlobWithTimeout({
+            file: issuedThumbFile,
+            blob: thumb.blob,
+            contentType: thumb.contentType,
+            sessionId: draftId,
+            timeoutMs: LISTING_UPLOAD_TIMEOUT_MS,
+            needPublicUrl: true,
+          });
           uploadedPaths.push(issuedThumbPath);
+          thumbUrl = thumbUpload.publicUrl || mainUrl;
 
           const finalizeRes = await authFetch("/api/uploads/finalize", {
             method: "POST",
@@ -348,10 +322,9 @@ export default function NewListingPage() {
           throw uploadErr;
         }
 
-        const [mainUrl, thumbUrl] = await Promise.all([
-          getDownloadURL(mainRef),
-          getDownloadURL(thumbRef),
-        ]);
+        if (!mainUrl) {
+          throw new Error("Không nhận được đường dẫn công khai sau khi tải ảnh.");
+        }
 
         setImageItems((prev) =>
           prev.map((it) =>
@@ -394,15 +367,11 @@ export default function NewListingPage() {
         (p): p is string => Boolean(p && !p.startsWith("data/"))
       );
       if (targetPaths.length > 0) {
-        try {
-          await Promise.all(targetPaths.map((p) => deleteObject(ref(storage, p))));
-        } catch {
-          await authFetch("/api/uploads/cleanup", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sessionId: draftId, paths: targetPaths }),
-          }).catch(() => undefined);
-        }
+        await authFetch("/api/uploads/cleanup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: draftId, paths: targetPaths }),
+        }).catch(() => undefined);
       }
     }
   };

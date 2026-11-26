@@ -3,7 +3,11 @@ import crypto from "crypto";
 import { withApi } from "@/lib/server/http";
 import { verifyCronRequest } from "@/lib/server/cron";
 import { redactErrorMessage } from "@/lib/server/request-utils";
-import { adminStorage, adminDb, FieldValue, Timestamp } from "@/lib/firebase/admin";
+import { adminDb, FieldValue, Timestamp } from "@/lib/firebase/admin";
+import {
+  deleteStorageObject,
+  listStorageObjectsByPrefix,
+} from "@/lib/server/storage-provider";
 
 async function enqueueCardCleanupJob(params: {
   targetPath: string;
@@ -48,7 +52,6 @@ const MAX_PAGES = 5;
 export const GET = withApi(async (request: NextRequest) => {
   verifyCronRequest(request);
 
-  const bucket = adminStorage.bucket();
   let purgedCount = 0;
   let orphanPurgedCount = 0;
   let errorsCount = 0;
@@ -78,7 +81,7 @@ export const GET = withApi(async (request: NextRequest) => {
       let deleteOk = true;
       if (p && p.startsWith("private/cards/")) {
         try {
-          await bucket.file(p).delete({ ignoreNotFound: true });
+          await deleteStorageObject(p);
         } catch (fileErr) {
           deleteOk = false;
           errorsCount++;
@@ -129,7 +132,7 @@ export const GET = withApi(async (request: NextRequest) => {
 
       if (p && p.startsWith("private/cards/")) {
         try {
-          await bucket.file(p).delete({ ignoreNotFound: true });
+          await deleteStorageObject(p);
         } catch (storageErr) {
           deleteOk = false;
           errorsCount++;
@@ -164,29 +167,22 @@ export const GET = withApi(async (request: NextRequest) => {
     let nextStorageToken: string | undefined = undefined;
 
     for (let page = 0; page < MAX_PAGES; page++) {
-      const listQuery: { prefix: string; maxResults: number; pageToken?: string } = {
-        prefix: "private/cards/",
+      const { items: files, nextPageToken } = await listStorageObjectsByPrefix("private/cards/", {
         maxResults: PAGE_SIZE,
-      };
-      if (currentStorageToken) {
-        listQuery.pageToken = currentStorageToken;
-      }
-
-      const [files, nextQuery] = await bucket.getFiles(listQuery);
+        ...(currentStorageToken ? { pageToken: currentStorageToken } : {}),
+      });
       if (!files || files.length === 0) {
         nextStorageToken = undefined;
         break;
       }
 
       for (const file of files) {
-        if (file.name.endsWith("/")) continue;
+        if (file.path.endsWith("/")) continue;
 
-        const timeCreated = file.metadata.timeCreated
-          ? new Date(file.metadata.timeCreated).getTime()
-          : now;
+        const timeCreated = file.createdAtMs ?? now;
         const age = now - timeCreated;
 
-        const parts = file.name.split("/");
+        const parts = file.path.split("/");
         const userId = parts[2];
         if (!userId) continue;
 
@@ -196,15 +192,15 @@ export const GET = withApi(async (request: NextRequest) => {
           if (!verifSnap.exists) {
             // Ảnh thẻ mồ côi (không có hồ sơ người dùng) > 24 giờ -> Xóa
             if (age > ONE_DAY_MS) {
-              await file.delete({ ignoreNotFound: true });
+              await deleteStorageObject(file.path);
               orphanPurgedCount++;
             }
           } else {
             const vData = verifSnap.data() || {};
 
             // Nếu hồ sơ không còn trỏ đến file này nữa (file cũ sau khi người dùng tải lại ảnh) > 24h
-            if (vData.cardStoragePath !== file.name && age > ONE_DAY_MS) {
-              await file.delete({ ignoreNotFound: true });
+            if (vData.cardStoragePath !== file.path && age > ONE_DAY_MS) {
+              await deleteStorageObject(file.path);
               orphanPurgedCount++;
               continue;
             }
@@ -213,7 +209,7 @@ export const GET = withApi(async (request: NextRequest) => {
             if (["approved", "rejected", "expired"].includes(vData.status)) {
               const decidedAtMs = vData.decidedAt?.toMillis?.() || timeCreated;
               if (now - decidedAtMs > THIRTY_DAYS_MS) {
-                await file.delete({ ignoreNotFound: true });
+                await deleteStorageObject(file.path);
                 await verifSnap.ref.update({
                   cardDeleted: true,
                   cardStoragePath: null,
@@ -232,7 +228,7 @@ export const GET = withApi(async (request: NextRequest) => {
           errorsCount++;
           console.error("[CRON_PURGE_CARDS] Lỗi kiểm tra file Storage:", redactErrorMessage(itemErr));
           await enqueueCardCleanupJob({
-            targetPath: file.name,
+            targetPath: file.path,
             ownerUid: userId,
             reason: "card_orphan_retry",
             err: itemErr,
@@ -240,9 +236,9 @@ export const GET = withApi(async (request: NextRequest) => {
         }
       }
 
-      if (nextQuery && typeof nextQuery.pageToken === "string") {
-        currentStorageToken = nextQuery.pageToken;
-        nextStorageToken = nextQuery.pageToken;
+      if (nextPageToken) {
+        currentStorageToken = nextPageToken;
+        nextStorageToken = nextPageToken;
       } else {
         nextStorageToken = undefined;
       }

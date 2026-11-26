@@ -4,6 +4,7 @@ import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { redactErrorMessage } from "@/lib/server/request-utils";
 import { adminDb, adminAuth, FieldValue } from "@/lib/firebase/admin";
+import { isAllowedCloudinaryPublicUrl } from "@/lib/server/storage-provider";
 import { validateDisplayName } from "@/lib/utils/contact-filter";
 import { z } from "zod";
 
@@ -52,6 +53,10 @@ function getAllowedStorageBuckets(): string[] {
 
 function isAllowedAvatarUrl(url: string, userId: string): boolean {
   if (url.startsWith("https://lh3.googleusercontent.com/")) {
+    return true;
+  }
+  const avatarPathRe = new RegExp(`^public/avatars/${userId}/avatar\\.(webp|jpg)$`);
+  if (isAllowedCloudinaryPublicUrl(url, avatarPathRe)) {
     return true;
   }
   const buckets = getAllowedStorageBuckets();
@@ -117,7 +122,9 @@ export const POST = withApi(async (req: NextRequest) => {
         "Ảnh đại diện chỉ chấp nhận từ Google hoặc tệp avatar hợp lệ trong bucket của hệ thống."
       );
     }
-    isStorageAvatar = data.photoURL.startsWith("https://firebasestorage.googleapis.com/");
+    isStorageAvatar =
+      data.photoURL.startsWith("https://firebasestorage.googleapis.com/") ||
+      data.photoURL.startsWith("https://res.cloudinary.com/");
   }
 
   const updates: Record<string, unknown> = {

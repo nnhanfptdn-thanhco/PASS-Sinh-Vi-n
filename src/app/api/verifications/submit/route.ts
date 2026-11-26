@@ -4,7 +4,11 @@ import { requireActiveUser } from "@/lib/server/auth-guard";
 import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { submitVerificationSchema } from "@/lib/server/schemas";
-import { adminDb, adminStorage, computeStudentIdHash, FieldValue, hasAdminCredentials } from "@/lib/firebase/admin";
+import { adminDb, computeStudentIdHash, FieldValue, hasAdminCredentials } from "@/lib/firebase/admin";
+import {
+  deleteStorageObject,
+  getStorageObjectMetadata,
+} from "@/lib/server/storage-provider";
 import { isStudentEmail } from "@/lib/auth/student-email";
 import { validateDisplayName } from "@/lib/utils/contact-filter";
 import { redactErrorMessage } from "@/lib/server/request-utils";
@@ -53,13 +57,11 @@ export const POST = withApi(async (req: NextRequest) => {
     throw new ApiError(400, "INVALID_CARD_PATH", "Tệp ảnh thẻ sinh viên không hợp lệ hoặc không thuộc tài khoản của bạn.");
   }
   try {
-    const cardFile = adminStorage.bucket().file(data.cardStoragePath);
-    const [cardExists] = await cardFile.exists();
-    if (!cardExists) {
+    const meta = await getStorageObjectMetadata(data.cardStoragePath);
+    if (!meta.exists) {
       throw new ApiError(400, "CARD_FILE_NOT_FOUND", "Không tìm thấy tệp ảnh thẻ trên hệ thống lưu trữ. Vui lòng tải lại ảnh.");
     }
-    const [meta] = await cardFile.getMetadata();
-    if (!/^image\/(webp|jpeg)$/.test(String(meta.contentType)) || Number(meta.size) > 10 * 1024 * 1024) {
+    if (!/^image\/(webp|jpeg)$/.test(meta.contentType) || meta.sizeBytes > 10 * 1024 * 1024) {
       throw new ApiError(400, "INVALID_CARD_FILE", "Ảnh thẻ phải là WebP/JPEG dưới 10MB.");
     }
   } catch (storageErr) {
@@ -239,7 +241,7 @@ export const POST = withApi(async (req: NextRequest) => {
   if (previousCardPathToDelete) {
     const oldPath: string = previousCardPathToDelete;
     try {
-      await adminStorage.bucket().file(oldPath).delete({ ignoreNotFound: true });
+      await deleteStorageObject(oldPath);
     } catch (cleanErr) {
       const digest = crypto.createHash("sha256").update(oldPath).digest("hex").slice(0, 24);
       const jobId = `oldcard_${userId}_${digest}`;

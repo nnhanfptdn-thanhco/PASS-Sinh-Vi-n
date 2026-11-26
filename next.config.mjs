@@ -25,6 +25,12 @@ const configuredBuckets = Array.from(
   )
 );
 
+const cloudinaryCloudName = (
+  process.env.CLOUDINARY_CLOUD_NAME ||
+  process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ||
+  ""
+).trim();
+
 const remotePatterns = [
   ...configuredBuckets.flatMap((bucket) => [
     {
@@ -38,6 +44,11 @@ const remotePatterns = [
       pathname: `/${bucket}/**`,
     },
   ]),
+  {
+    protocol: "https",
+    hostname: "res.cloudinary.com",
+    pathname: cloudinaryCloudName ? `/${cloudinaryCloudName}/image/upload/**` : "/**/image/upload/**",
+  },
   {
     protocol: "https",
     hostname: "images.unsplash.com",
@@ -120,7 +131,7 @@ const nextConfig = {
           {
             key: "Content-Security-Policy-Report-Only",
             value:
-              `default-src 'self'; script-src ${cspScriptSrc}; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://firebasestorage.googleapis.com https://accounts.google.com; frame-src 'self' https://*.firebaseapp.com https://accounts.google.com; img-src 'self' blob: data: https://firebasestorage.googleapis.com https://storage.googleapis.com https://images.unsplash.com https://lh3.googleusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';`,
+              `default-src 'self'; script-src ${cspScriptSrc}; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://firebasestorage.googleapis.com https://api.cloudinary.com https://accounts.google.com; frame-src 'self' https://*.firebaseapp.com https://accounts.google.com; img-src 'self' blob: data: https://res.cloudinary.com https://firebasestorage.googleapis.com https://storage.googleapis.com https://images.unsplash.com https://lh3.googleusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';`,
           },
         ],
       },

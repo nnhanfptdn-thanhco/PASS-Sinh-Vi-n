@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireActiveUser, requireApprovedStudent, type AuthenticatedUser, type VerifiedUser } from "@/lib/server/auth-guard";
 import { ApiError } from "@/lib/server/http";
 import { isValidFirestoreId } from "@/lib/server/request-utils";
-import { adminDb, adminStorage } from "@/lib/firebase/admin";
+import { adminDb } from "@/lib/firebase/admin";
+import { getSignedStorageReadUrl } from "@/lib/server/storage-provider";
 import type { ChatPartnerSummary, ConversationDTO, ConversationStatus } from "@/lib/chat/types";
 
 export function withNoStore(res: NextResponse): NextResponse {
@@ -117,14 +118,7 @@ export async function signChatAttachmentReadUrl(attachmentPath: string | null): 
     return null;
   }
   try {
-    const file = adminStorage.bucket().file(attachmentPath);
-    if (typeof file.getSignedUrl !== "function") return null;
-    const [signed] = await file.getSignedUrl({
-      version: "v4",
-      action: "read",
-      expires: Date.now() + 5 * 60 * 1000,
-    });
-    return signed;
+    return await getSignedStorageReadUrl(attachmentPath, 5 * 60 * 1000);
   } catch {
     return null;
   }

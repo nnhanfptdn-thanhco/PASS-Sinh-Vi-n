@@ -4,7 +4,8 @@ import { z } from "zod";
 import { requireActiveUser } from "@/lib/server/auth-guard";
 import { withApi, readJson, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
-import { adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
+import { adminDb, FieldValue } from "@/lib/firebase/admin";
+import { deleteStorageObject } from "@/lib/server/storage-provider";
 import { redactErrorMessage } from "@/lib/server/request-utils";
 
 export const runtime = "nodejs";
@@ -84,13 +85,12 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
-  const bucket = adminStorage.bucket();
   const deleted: string[] = [];
   const queued: string[] = [];
 
   for (const path of targetPaths) {
     try {
-      await bucket.file(path).delete({ ignoreNotFound: true });
+      await deleteStorageObject(path);
       deleted.push(path);
     } catch (err: unknown) {
       const pathDigest = crypto.createHash("sha256").update(path).digest("hex").slice(0, 24);

@@ -1,7 +1,8 @@
 import "server-only";
 import crypto from "crypto";
-import { adminAuth, adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
+import { adminAuth, adminDb, FieldValue } from "@/lib/firebase/admin";
 import { redactErrorMessage } from "@/lib/server/request-utils";
+import { deleteStoragePrefixAndCheckEmpty } from "@/lib/server/storage-provider";
 import {
   activeReservationLockRef,
   listingReservationStatsRef,
@@ -33,14 +34,13 @@ async function deleteRefsInChunks(
 }
 
 async function deletePrefixAndVerifyEmpty(params: {
-  bucket: ReturnType<typeof adminStorage.bucket>;
   prefix: string;
   jobId: string;
   ownerUid: string;
   reason: string;
   conversationId?: string;
 }): Promise<void> {
-  const { bucket, prefix, jobId, ownerUid, reason, conversationId } = params;
+  const { prefix, jobId, ownerUid, reason, conversationId } = params;
   const jobRef = adminDb.collection("storageCleanupJobs").doc(jobId);
 
   await jobRef.set(
@@ -61,11 +61,7 @@ async function deletePrefixAndVerifyEmpty(params: {
   );
 
   try {
-    await bucket.deleteFiles({ prefix, force: true });
-    const [remaining] = await bucket.getFiles({ prefix, maxResults: 1 });
-    if (remaining.length > 0) {
-      throw new Error(`STORAGE_PREFIX_NOT_EMPTY:${prefix}`);
-    }
+    await deleteStoragePrefixAndCheckEmpty(prefix);
     await jobRef.delete().catch(() => undefined);
   } catch (err: unknown) {
     const errMsg = redactErrorMessage(err);
@@ -241,8 +237,6 @@ export async function purgeUserData(
     await batch.commit();
   }
 
-  const bucket = adminStorage.bucket();
-
   // Phase 2: Durable Storage cleanup BEFORE Firestore recursiveDelete cho hội thoại chat
   const convSnap = await adminDb
     .collection("conversations")
@@ -252,7 +246,6 @@ export async function purgeUserData(
   for (const convDoc of convSnap.docs) {
     const convId = convDoc.id;
     await deletePrefixAndVerifyEmpty({
-      bucket,
       prefix: `private/chats/${convId}/`,
       jobId: `chat_${convId}`,
       ownerUid: userId,
@@ -271,7 +264,6 @@ export async function purgeUserData(
   ];
   for (const item of userPrefixes) {
     await deletePrefixAndVerifyEmpty({
-      bucket,
       prefix: item.prefix,
       jobId: item.jobId,
       ownerUid: userId,

@@ -1,8 +1,13 @@
 import crypto from "crypto";
-import { adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
+import { adminDb, FieldValue } from "@/lib/firebase/admin";
 import { todayVN, isPastDeadline } from "@/lib/utils/date";
 import { purgeUserData } from "@/lib/services/account-purge";
 import { setVerifiedClaim, clearAdminClaim } from "@/lib/server/claims";
+import {
+  deleteStorageObject,
+  deleteStoragePrefixAndCheckEmpty,
+  listStorageObjectsByPrefix,
+} from "@/lib/server/storage-provider";
 import {
   acquireDocLease,
   computeBackoffWithJitter,
@@ -38,6 +43,7 @@ export interface CleanupResult {
   orphanDraftsDeleted: number;
   orphanChatFilesDeleted: number;
   retentionRecordsPurged: number;
+  ttlDocsPurged: number;
   errors: CleanupPhaseError[];
   partialFailure: boolean;
 }
@@ -307,6 +313,7 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
   let orphanDraftsDeleted = 0;
   let orphanChatFilesDeleted = 0;
   let retentionRecordsPurged = 0;
+  let ttlDocsPurged = 0;
   const errors: CleanupPhaseError[] = [];
 
   // --- 1. DỌN ẢNH THẺ QUÁ HẠN 30 NGÀY ---
@@ -324,7 +331,7 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
       if (typeof storagePath === "string" && storagePath.length > 0) {
         try {
           if (storagePath.startsWith("private/cards/")) {
-            await adminStorage.bucket().file(storagePath).delete({ ignoreNotFound: true });
+            await deleteStorageObject(storagePath);
           }
           await doc.ref.update({
             cardDeleted: true,
@@ -672,7 +679,6 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
       }
     }
 
-    const bucket = adminStorage.bucket();
     for (const doc of storageDocs) {
       const lease = await acquireDocLease(doc.ref, leaseOwner, 5 * 60 * 1000);
       if (!lease.acquired || !lease.data) continue;
@@ -684,13 +690,9 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
       try {
         if (targetPath) {
           if (kind === "prefix") {
-            await bucket.deleteFiles({ prefix: targetPath, force: true });
-            const [remaining] = await bucket.getFiles({ prefix: targetPath, maxResults: 1 });
-            if (remaining.length > 0) {
-              throw new Error("STORAGE_PREFIX_NOT_EMPTY");
-            }
+            await deleteStoragePrefixAndCheckEmpty(targetPath);
           } else {
-            await bucket.file(targetPath).delete({ ignoreNotFound: true });
+            await deleteStorageObject(targetPath);
           }
         }
         await doc.ref.delete();
@@ -752,7 +754,6 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
       .limit(50)
       .get();
 
-    const bucket = adminStorage.bucket();
     for (const sDoc of expiredSessionsSnap.docs) {
       const sData = sDoc.data() || {};
       if (sData.claimed === true) continue;
@@ -806,7 +807,7 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
       }
 
       for (const path of allowedPaths) {
-        await bucket.file(path).delete({ ignoreNotFound: true }).catch(() => undefined);
+        await deleteStorageObject(path).catch(() => undefined);
       }
       await sDoc.ref.delete();
       orphanDraftsDeleted++;
@@ -821,75 +822,69 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
 
   // --- 10. SWEEPER GIỚI HẠN TRANG TÌM TỆP MỒ CÔI TRONG private/chats/ ---
   try {
-    const bucket = adminStorage.bucket();
-    if (typeof bucket.getFiles === "function") {
-      const cursorRef = adminDb.collection("systemState").doc("chatOrphanCursor");
-      const cursorSnap = await cursorRef.get();
-      let pageToken = cursorSnap.exists
-        ? (cursorSnap.data()?.pageToken as string | undefined)
-        : undefined;
+    const cursorRef = adminDb.collection("systemState").doc("chatOrphanCursor");
+    const cursorSnap = await cursorRef.get();
+    let pageToken = cursorSnap.exists
+      ? (cursorSnap.data()?.pageToken as string | undefined)
+      : undefined;
 
-      const oneDayAgoMs = now.getTime() - 24 * 60 * 60 * 1000;
-      let nextToken: string | undefined;
+    const oneDayAgoMs = now.getTime() - 24 * 60 * 60 * 1000;
+    let nextToken: string | undefined;
 
-      for (let page = 0; page < 2; page++) {
-        const [files, nextQuery] = await bucket.getFiles({
-          prefix: "private/chats/",
-          maxResults: 50,
-          ...(pageToken ? { pageToken } : {}),
-        });
-        if (!files || files.length === 0) {
-          nextToken = undefined;
-          break;
-        }
+    for (let page = 0; page < 2; page++) {
+      const { items: files, nextPageToken } = await listStorageObjectsByPrefix("private/chats/", {
+        maxResults: 50,
+        ...(pageToken ? { pageToken } : {}),
+      });
+      if (!files || files.length === 0) {
+        nextToken = undefined;
+        break;
+      }
 
-        for (const file of files) {
-          if (file.name.endsWith("/")) continue;
-          const createdMs = file.metadata?.timeCreated
-            ? new Date(file.metadata.timeCreated).getTime()
-            : now.getTime();
-          if (createdMs > oneDayAgoMs) continue;
+      for (const file of files) {
+        if (file.path.endsWith("/")) continue;
+        const createdMs = file.createdAtMs ?? now.getTime();
+        if (createdMs > oneDayAgoMs) continue;
 
-          const parts = file.name.split("/");
-          const convId = parts[2];
-          if (!convId) continue;
+        const parts = file.path.split("/");
+        const convId = parts[2];
+        if (!convId) continue;
 
-          const convSnap = await adminDb.collection("conversations").doc(convId).get();
-          if (!convSnap.exists) {
-            await file.delete({ ignoreNotFound: true }).catch(() => undefined);
-            orphanChatFilesDeleted++;
-          } else {
-            const msgMatch = await convSnap.ref
-              .collection("messages")
-              .where("attachmentPath", "==", file.name)
-              .limit(1)
-              .get();
-            if (msgMatch.empty) {
-              await file.delete({ ignoreNotFound: true }).catch(() => undefined);
-              orphanChatFilesDeleted++;
-            }
-          }
-        }
-
-        if (nextQuery && typeof nextQuery.pageToken === "string") {
-          pageToken = nextQuery.pageToken;
-          nextToken = nextQuery.pageToken;
+        const convSnap = await adminDb.collection("conversations").doc(convId).get();
+        if (!convSnap.exists) {
+          await deleteStorageObject(file.path).catch(() => undefined);
+          orphanChatFilesDeleted++;
         } else {
-          nextToken = undefined;
-          break;
+          const msgMatch = await convSnap.ref
+            .collection("messages")
+            .where("attachmentPath", "==", file.path)
+            .limit(1)
+            .get();
+          if (msgMatch.empty) {
+            await deleteStorageObject(file.path).catch(() => undefined);
+            orphanChatFilesDeleted++;
+          }
         }
       }
 
-      await cursorRef
-        .set(
-          {
-            pageToken: nextToken || null,
-            updatedAt: FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        )
-        .catch(() => undefined);
+      if (nextPageToken) {
+        pageToken = nextPageToken;
+        nextToken = nextPageToken;
+      } else {
+        nextToken = undefined;
+        break;
+      }
     }
+
+    await cursorRef
+      .set(
+        {
+          pageToken: nextToken || null,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      )
+      .catch(() => undefined);
   } catch (err) {
     recordError(errors, "orphan_chat_files", err);
   }
@@ -914,6 +909,30 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
       const errStr = String(err);
       if (!errStr.includes("requires an index") && !errStr.includes("FAILED_PRECONDITION")) {
         recordError(errors, `retention_purge_${colName}`, err);
+      }
+    }
+  }
+
+  // --- 12. DỌN BẢN GHI HẾT HẠN TTL MIỄN PHÍ TRÊN GÓI SPARK (KHÔNG CẦN BLAZE) ---
+  for (const ttlCol of ["rateLimits", "idempotency", "userUploadQuotas", "userAiQuotas"] as const) {
+    try {
+      const snap = await adminDb
+        .collection(ttlCol)
+        .where("expiresAt", "<=", now)
+        .limit(200)
+        .get();
+      if (!snap.empty) {
+        const batch = adminDb.batch();
+        for (const d of snap.docs) {
+          batch.delete(d.ref);
+          ttlDocsPurged++;
+        }
+        await batch.commit();
+      }
+    } catch (err) {
+      const errStr = String(err);
+      if (!errStr.includes("requires an index") && !errStr.includes("FAILED_PRECONDITION")) {
+        recordError(errors, `ttl_purge_${ttlCol}`, err);
       }
     }
   }
@@ -948,6 +967,7 @@ export async function runScheduledCleanup(now: Date = new Date()): Promise<Clean
     orphanDraftsDeleted,
     orphanChatFilesDeleted,
     retentionRecordsPurged,
+    ttlDocsPurged,
     errors,
     partialFailure,
   };
