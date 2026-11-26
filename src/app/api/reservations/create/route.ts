@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireApprovedStudent } from "@/lib/auth/server";
+import { requireApprovedStudent } from "@/lib/server/auth-guard";
 import { readJson, withApi, ApiError } from "@/lib/server/http";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
+import { FIRESTORE_ID_SCHEMA } from "@/lib/server/schemas";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
 import { z } from "zod";
 import { containsContactInfo } from "@/lib/utils/contact-filter";
 import { isPastDeadline } from "@/lib/utils/date";
+import {
+  activeReservationLockRef,
+  listingReservationStatsRef,
+  userReservationStatsRef,
+} from "@/lib/server/stats";
 import {
   MAX_PENDING_RESERVATIONS_PER_LISTING,
   MAX_PENDING_RESERVATIONS_PER_BUYER,
@@ -16,7 +23,7 @@ export const dynamic = "force-dynamic";
 
 const createReservationSchema = z
   .object({
-    listingId: z.string().min(1, "Thiếu listingId"),
+    listingId: FIRESTORE_ID_SCHEMA,
     deliveryMethod: z.enum(["pickup", "sellerDelivery", "carrierShipping", "campusDelivery"], {
       message: "Phương thức nhận hàng không hợp lệ.",
     }),
@@ -39,7 +46,7 @@ export const POST = withApi(async (req: NextRequest) => {
   const body = await readJson(req);
   const { listingId, deliveryMethod, preferredSchedule } = createReservationSchema.parse(body);
 
-  // 1. Kiểm tra bộ lọc thông tin liên hệ trong ghi chú hẹn gặp
+  // 1. Kiểm tra bộ lọc thông tin liên hệ trong ghi chú hẹn gặp (trước khi trừ rate limit)
   if (preferredSchedule && containsContactInfo(preferredSchedule)) {
     throw new ApiError(
       400,
@@ -48,22 +55,74 @@ export const POST = withApi(async (req: NextRequest) => {
     );
   }
 
+  // 2. Rate limiting per-UID fail-closed
+  await consumeRateLimit({
+    scope: "create_reservation",
+    key: buyerId,
+    limit: 20,
+    windowSec: 3600,
+    customMessage: "Bạn đã gửi quá nhiều yêu cầu giữ chỗ trong 1 giờ qua. Vui lòng thử lại sau.",
+  });
+
   const reservationRef = adminDb.collection("reservations").doc();
   const listingRef = adminDb.collection("listings").doc(listingId);
+  const activeLockRef = activeReservationLockRef(listingId, buyerId);
+  const listingStatsRef = listingReservationStatsRef(listingId);
+  const buyerStatsRef = userReservationStatsRef(buyerId);
 
   const result = await adminDb.runTransaction(async (transaction) => {
-    // 2. Đọc tin đăng
-    const listingSnap = await transaction.get(listingRef);
+    // ===== READ PHASE: ĐỌC TẤT CẢ LOCK, AGGREGATE STATS VÀ DỮ LIỆU GỐC TRONG CÙNG TRANSACTION =====
+    const [
+      listingSnap,
+      activeLockSnap,
+      listingStatsSnap,
+      buyerStatsSnap,
+      existingActiveSnap,
+      currentPendingSnap,
+      buyerPendingSnap,
+    ] = await Promise.all([
+      transaction.get(listingRef),
+      transaction.get(activeLockRef),
+      transaction.get(listingStatsRef),
+      transaction.get(buyerStatsRef),
+      transaction.get(
+        adminDb
+          .collection("reservations")
+          .where("listingId", "==", listingId)
+          .where("buyerId", "==", buyerId)
+          .where("status", "in", ["pending", "waitlisted", "confirmed"])
+      ),
+      transaction.get(
+        adminDb
+          .collection("reservations")
+          .where("listingId", "==", listingId)
+          .where("status", "==", "pending")
+      ),
+      transaction.get(
+        adminDb
+          .collection("reservations")
+          .where("buyerId", "==", buyerId)
+          .where("status", "==", "pending")
+      ),
+    ]);
+
     if (!listingSnap.exists) {
       throw new ApiError(404, "LISTING_NOT_FOUND", "Món đồ này không tồn tại.");
     }
 
     const listingData = listingSnap.data() as Record<string, unknown>;
+    if (listingData.operationStatus) {
+      throw new ApiError(
+        409,
+        "LISTING_PROCESSING",
+        "Món đồ này đang được xử lý đóng hoặc kiểm duyệt."
+      );
+    }
+
     const sellerId = listingData.sellerId as string;
     const listingStatus = listingData.status as string;
     const passDeadline = (listingData.passDeadline as string) || "";
 
-    // Kiểm tra tính khả dụng của tin đăng
     if (listingStatus !== "active" || isPastDeadline(passDeadline)) {
       throw new ApiError(
         400,
@@ -72,7 +131,6 @@ export const POST = withApi(async (req: NextRequest) => {
       );
     }
 
-    // Không cho tự giữ chỗ đồ của chính mình
     if (buyerId === sellerId) {
       throw new ApiError(
         400,
@@ -81,7 +139,6 @@ export const POST = withApi(async (req: NextRequest) => {
       );
     }
 
-    // Kiểm tra phương thức nhận hàng có được người bán hỗ trợ không
     const shippingMethods = (listingData.shippingMethods as Record<string, boolean>) || {};
     if (!shippingMethods[deliveryMethod]) {
       throw new ApiError(
@@ -91,16 +148,8 @@ export const POST = withApi(async (req: NextRequest) => {
       );
     }
 
-    // 3. Kiểm tra xem người mua đã có yêu cầu chưa kết thúc trên tin này chưa
-    const existingActiveSnap = await transaction.get(
-      adminDb
-        .collection("reservations")
-        .where("listingId", "==", listingId)
-        .where("buyerId", "==", buyerId)
-        .where("status", "in", ["pending", "waitlisted", "confirmed"])
-    );
-
-    if (!existingActiveSnap.empty) {
+    // Kiểm tra unique lock đồng thời và fallback query nếu legacy chưa có lock
+    if ((activeLockSnap.exists && activeLockSnap.data()?.active === true) || !existingActiveSnap.empty) {
       throw new ApiError(
         409,
         "ALREADY_RESERVED",
@@ -108,15 +157,12 @@ export const POST = withApi(async (req: NextRequest) => {
       );
     }
 
-    // 4. Kiểm tra số lượng pending trên tin này (tối đa 3)
-    const currentPendingSnap = await transaction.get(
-      adminDb
-        .collection("reservations")
-        .where("listingId", "==", listingId)
-        .where("status", "==", "pending")
-    );
+    const storedListingPending = listingStatsSnap.exists
+      ? Math.max(0, Number(listingStatsSnap.data()?.pendingCount ?? 0))
+      : 0;
+    const effectiveListingPending = Math.max(storedListingPending, currentPendingSnap.size);
 
-    if (currentPendingSnap.size >= MAX_PENDING_RESERVATIONS_PER_LISTING) {
+    if (effectiveListingPending >= MAX_PENDING_RESERVATIONS_PER_LISTING) {
       throw new ApiError(
         429,
         "LISTING_PENDING_LIMIT_REACHED",
@@ -124,15 +170,12 @@ export const POST = withApi(async (req: NextRequest) => {
       );
     }
 
-    // 5. Kiểm tra số lượng pending toàn hệ thống của người mua (tối đa 5)
-    const buyerPendingSnap = await transaction.get(
-      adminDb
-        .collection("reservations")
-        .where("buyerId", "==", buyerId)
-        .where("status", "==", "pending")
-    );
+    const storedBuyerPending = buyerStatsSnap.exists
+      ? Math.max(0, Number(buyerStatsSnap.data()?.pendingCount ?? 0))
+      : 0;
+    const effectiveBuyerPending = Math.max(storedBuyerPending, buyerPendingSnap.size);
 
-    if (buyerPendingSnap.size >= MAX_PENDING_RESERVATIONS_PER_BUYER) {
+    if (effectiveBuyerPending >= MAX_PENDING_RESERVATIONS_PER_BUYER) {
       throw new ApiError(
         429,
         "BUYER_PENDING_LIMIT_REACHED",
@@ -140,7 +183,7 @@ export const POST = withApi(async (req: NextRequest) => {
       );
     }
 
-    // 6. Tạo reservation với hạn 24 giờ
+    // ===== WRITE PHASE =====
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
     const newReservation = {
@@ -163,8 +206,30 @@ export const POST = withApi(async (req: NextRequest) => {
     };
 
     transaction.set(reservationRef, newReservation);
+    transaction.set(activeLockRef, {
+      active: true,
+      reservationId: reservationRef.id,
+      listingId,
+      buyerId,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    transaction.set(
+      listingStatsRef,
+      {
+        pendingCount: effectiveListingPending + 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    transaction.set(
+      buyerStatsRef,
+      {
+        pendingCount: effectiveBuyerPending + 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
 
-    // 7. Tạo thông báo cho người bán
     const notifRef = adminDb.collection("notifications").doc();
     transaction.set(notifRef, {
       userId: sellerId,

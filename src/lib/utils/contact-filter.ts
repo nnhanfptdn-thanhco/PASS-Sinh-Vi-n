@@ -54,19 +54,34 @@ const CYRILLIC_HOMOGLYPHS: Record<string, string> = {
   "\u0445": "x", "\u0425": "X",
 };
 
-/** Chuyển đổi các chữ số đọc bằng chữ (Việt & Anh) sang dạng số */
+/**
+ * Chuyển đổi các chữ số đọc bằng chữ (Việt & Anh) sang dạng số.
+ * Từ không phải chữ số được thay bằng dấu phân cách cứng '|' để tránh ghép nhầm
+ * các từ rời rạc trong văn bản tiếng Việt bình thường thành số điện thoại giả.
+ */
 function normalizeWordDigits(text: string): string {
-  const words = text.split(/[\s,.-]+/);
+  const words = text.split(/[\s,.\-_/()]+/).filter(Boolean);
   let converted = "";
   for (const w of words) {
     const lower = w.toLowerCase();
     if (WORD_DIGITS[lower] !== undefined) {
       converted += WORD_DIGITS[lower];
+    } else if (/^\d+$/.test(lower)) {
+      converted += lower;
     } else {
-      converted += " ";
+      converted += "|";
     }
   }
   return converted;
+}
+
+/** Chuẩn hóa ký tự ẩn, emojis và Cyrillic homoglyphs sang Latin */
+export function normalizeHomoglyphs(str: string): string {
+  if (!str || typeof str !== "string") return "";
+  let sanitized = str.replace(/[\u200B-\u200D\uFEFF\u00AD\u2060]/g, "");
+  sanitized = sanitized.replace(/([0-9])(?:\uFE0F)?\u20E3/g, "$1");
+  sanitized = sanitized.replace(/[\u0410-\u044F]/g, (ch) => CYRILLIC_HOMOGLYPHS[ch] || ch);
+  return sanitized.normalize("NFKC");
 }
 
 /**
@@ -77,17 +92,7 @@ export function containsContactInfo(text: string | null | undefined): boolean {
     return false;
   }
 
-  // 1. Loại bỏ các ký tự ẩn / zero-width spaces (U+200B, U+200C, U+200D, U+FEFF, v.v.)
-  let sanitized = text.replace(/[\u200B-\u200D\uFEFF\u00AD\u2060]/g, "");
-
-  // 2. Chuyển đổi keycap emojis (0️⃣, 1️⃣, ..., 9️⃣) về chữ số
-  sanitized = sanitized.replace(/([0-9])(?:\uFE0F)?\u20E3/g, "$1");
-
-  // 3. Chuẩn hóa Cyrillic homoglyphs sang Latin
-  sanitized = sanitized.replace(/[\u0410-\u044F]/g, (ch) => CYRILLIC_HOMOGLYPHS[ch] || ch);
-
-  // 4. Chuẩn hóa Unicode NFKC (đưa số full-width ０-９ về 0-9)
-  let normalized = sanitized.normalize("NFKC").toLowerCase().trim();
+  let normalized = normalizeHomoglyphs(text).toLowerCase().trim();
   if (!normalized) return false;
 
   // 1. Kiểm tra Email
@@ -115,9 +120,9 @@ export function containsContactInfo(text: string | null | undefined): boolean {
     return true;
   }
 
-  // 6. Kiểm tra số điện thoại viết bằng chữ (ví dụ: không chín một hai ba bốn...)
+  // 6. Kiểm tra số điện thoại viết bằng chữ liên tiếp (ví dụ: không chín một hai ba bốn...)
   const wordsAsDigits = normalizeWordDigits(normalized);
-  if (VN_PHONE_REGEX.test(wordsAsDigits.replace(/\s+/g, ""))) {
+  if (VN_PHONE_REGEX.test(wordsAsDigits)) {
     return true;
   }
 
@@ -157,4 +162,67 @@ export function containsContactInfo(text: string | null | undefined): boolean {
   }
 
   return false;
+}
+
+/**
+ * Danh sách mẫu kiểm tra tên giả mạo Quản trị viên, Ban Quản Trị hoặc Hệ thống
+ */
+const IMPERSONATION_PATTERNS = [
+  /\b(?:admin|administrator)\b/i,
+  /\b(?:bqt|ban\s*qu[aả]n\s*tr[iị])\b/i,
+  /\b(?:qu[aả]n\s*tr[iị]\s*vi[eê]n)\b/i,
+  /\b(?:ch[oợ]\s*pass|chopass)\b/i,
+  /\b(?:h[oỗ]\s*tr[oợ]|cskh|hotline|support|helpdesk)\b/i,
+  /\b(?:h[eệ]\s*th[oố]ng|system)\b/i,
+  /\b(?:ki[eể]m\s*duy[eệ]t(?:\s*vi[eê]n)?|moderator|mod)\b/i,
+];
+
+export function isImpersonatingName(name: string): boolean {
+  if (!name || typeof name !== "string") return false;
+  const normalized = normalizeHomoglyphs(name).trim().toLowerCase();
+  const nonDiacritics = normalized
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d");
+
+  for (const pattern of IMPERSONATION_PATTERNS) {
+    if (pattern.test(normalized) || pattern.test(nonDiacritics)) {
+      return true;
+    }
+  }
+
+  const compact = nonDiacritics.replace(/[^a-z0-9]/g, "");
+  const compactDisallowed = [
+    "admin",
+    "administrator",
+    "bqt",
+    "banquantri",
+    "quantrivien",
+    "chopass",
+    "moderator",
+    "hotro",
+    "support",
+    "cskh",
+  ];
+  return compactDisallowed.some((keyword) => compact.includes(keyword));
+}
+
+export function validateDisplayName(name: string): { valid: boolean; error?: string } {
+  const trimmed = (name || "").trim();
+  if (trimmed.length < 2 || trimmed.length > 60) {
+    return { valid: false, error: "Tên hiển thị phải từ 2 đến 60 ký tự." };
+  }
+  if (containsContactInfo(trimmed)) {
+    return {
+      valid: false,
+      error: "Tên hiển thị không được chứa số điện thoại, Zalo hoặc liên kết mạng xã hội.",
+    };
+  }
+  if (isImpersonatingName(trimmed)) {
+    return {
+      valid: false,
+      error: "Tên hiển thị không được giả mạo Quản trị viên, Ban Quản Trị hoặc tên hệ thống.",
+    };
+  }
+  return { valid: true };
 }

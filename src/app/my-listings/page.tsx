@@ -3,7 +3,15 @@
 import * as React from "react";
 import Link from "next/link";
 import { authFetch, db } from "@/lib/firebase/client";
-import { collection, query, where, orderBy, onSnapshot } from "firebase/firestore";
+import {
+  collection,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  where,
+  type Unsubscribe,
+} from "firebase/firestore";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
@@ -66,11 +74,14 @@ export default function MyListingsPage() {
     setIsLoading(true);
     setActionError(null);
 
+    let fallbackUnsub: Unsubscribe | null = null;
+
     // Truy vấn các tin thuộc sở hữu của người bán hiện tại
     const q = query(
       collection(db, "listings"),
       where("sellerId", "==", user.uid),
-      orderBy("createdAt", "desc")
+      orderBy("createdAt", "desc"),
+      limit(100)
     );
 
     const unsubscribe = onSnapshot(
@@ -91,9 +102,10 @@ export default function MyListingsPage() {
         // Fallback truy vấn không orderBy nếu thiếu index tạm thời
         const fallbackQuery = query(
           collection(db, "listings"),
-          where("sellerId", "==", user.uid)
+          where("sellerId", "==", user.uid),
+          limit(100)
         );
-        onSnapshot(
+        fallbackUnsub = onSnapshot(
           fallbackQuery,
           (fallbackSnap) => {
             const fallbackItems: ListingDoc[] = [];
@@ -121,7 +133,10 @@ export default function MyListingsPage() {
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      fallbackUnsub?.();
+    };
   }, [user?.uid]);
 
   // Phân loại tin theo Tab
@@ -483,17 +498,29 @@ export default function MyListingsPage() {
                       </Link>
                     )}
 
-                    {/* Tin bị người bán tạm ẩn */}
+                    {/* Tin bị người bán tạm ẩn: nếu đã quá hạn thì hiện nút Gia hạn để kích hoạt lại */}
                     {item.status === "hidden_by_seller" && (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => executeManageAction(item.id, "show")}
-                        disabled={isBusy}
-                        leftIcon={<Eye className="w-3.5 h-3.5" />}
-                      >
-                        Hiện lại tin
-                      </Button>
+                      isOverdue ? (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => executeManageAction(item.id, "renew")}
+                          disabled={isBusy}
+                          leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
+                        >
+                          Gia hạn thêm 7 ngày
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => executeManageAction(item.id, "show")}
+                          disabled={isBusy}
+                          leftIcon={<Eye className="w-3.5 h-3.5" />}
+                        >
+                          Hiện lại tin
+                        </Button>
+                      )
                     )}
 
                     {/* Tin hết hạn hoặc active nhưng quá hạn */}

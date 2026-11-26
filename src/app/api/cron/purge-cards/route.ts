@@ -1,7 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import { withApi } from "@/lib/server/http";
 import { verifyCronRequest } from "@/lib/server/cron";
+import { redactErrorMessage } from "@/lib/server/request-utils";
 import { adminStorage, adminDb, FieldValue, Timestamp } from "@/lib/firebase/admin";
+
+async function enqueueCardCleanupJob(params: {
+  targetPath: string;
+  ownerUid: string;
+  reason: string;
+  err: unknown;
+}) {
+  const pathDigest = crypto.createHash("sha256").update(params.targetPath).digest("hex").slice(0, 20);
+  const jobId = `card_${params.ownerUid}_${pathDigest}`;
+  await adminDb
+    .collection("storageCleanupJobs")
+    .doc(jobId)
+    .set(
+      {
+        jobId,
+        kind: "object",
+        targetPath: params.targetPath,
+        ownerUid: params.ownerUid,
+        reason: params.reason,
+        status: "pending",
+        deadLetter: false,
+        attempts: 0,
+        lastError: redactErrorMessage(params.err),
+        nextAttemptAt: new Date(Date.now() + 2 * 60 * 1000),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    )
+    .catch(() => undefined);
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,7 +69,12 @@ export const GET = withApi(async (request: NextRequest) => {
 
     for (const doc of pendingDeleteSnap.docs) {
       const data = doc.data();
-      const p = typeof data.cardStoragePath === "string" ? data.cardStoragePath : null;
+      const p =
+        typeof data.cardStoragePath === "string" && data.cardStoragePath
+          ? data.cardStoragePath
+          : typeof data.cardImagePath === "string" && data.cardImagePath
+          ? data.cardImagePath
+          : null;
       let deleteOk = true;
       if (p && p.startsWith("private/cards/")) {
         try {
@@ -44,15 +82,24 @@ export const GET = withApi(async (request: NextRequest) => {
         } catch (fileErr) {
           deleteOk = false;
           errorsCount++;
-          console.error(`[CRON_PURGE_CARDS] Lỗi xóa file pending ${p}:`, fileErr);
+          console.error("[CRON_PURGE_CARDS] Lỗi xóa file pending:", redactErrorMessage(fileErr));
+          await enqueueCardCleanupJob({
+            targetPath: p,
+            ownerUid: doc.id,
+            reason: "card_purge_pending_retry",
+            err: fileErr,
+          });
         }
       }
       if (deleteOk) {
         await doc.ref.update({
           cardDeleted: true,
           cardStoragePath: null,
+          cardImagePath: null,
+          cardImagePreviewUrl: null,
           cardPurgeAt: FieldValue.delete(),
           cardDeletePending: FieldValue.delete(),
+          cardImagePurgedAt: FieldValue.serverTimestamp(),
           cardAutoDeletedAt: FieldValue.serverTimestamp(),
         });
         purgedCount++;
@@ -62,33 +109,22 @@ export const GET = withApi(async (request: NextRequest) => {
     // 2. Dọn dẹp ảnh thẻ theo cardPurgeAt (cardPurgeAt <= now). Sau khi xóa file thì FieldValue.delete(cardPurgeAt)
     // Document tự động rời khỏi index, loại bỏ hoàn toàn tình trạng quét lặp lại hồ sơ cũ và không cần con trỏ cursor
     const nowTs = Timestamp.fromMillis(now);
-    let purgeDocs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[] = [];
-    try {
-      const snap = await adminDb
-        .collection("verifications")
-        .where("cardPurgeAt", "<=", nowTs)
-        .orderBy("cardPurgeAt", "asc")
-        .limit(100)
-        .get();
-      purgeDocs = snap.docs;
-    } catch (idxErr: unknown) {
-      console.warn("[CRON_PURGE_CARDS] Fallback quét lọc theo hạn 30 ngày:", idxErr);
-      const fallbackSnap = await adminDb
-        .collection("verifications")
-        .where("status", "in", ["approved", "rejected", "expired"])
-        .limit(100)
-        .get();
-      purgeDocs = fallbackSnap.docs.filter((d) => {
-        const v = d.data();
-        if (!v.cardStoragePath) return false;
-        const purgeMs = v.cardPurgeAt?.toMillis?.() || (v.decidedAt?.toMillis?.() ? v.decidedAt.toMillis() + THIRTY_DAYS_MS : 0);
-        return purgeMs > 0 && purgeMs <= now;
-      });
-    }
+    const snap = await adminDb
+      .collection("verifications")
+      .where("cardPurgeAt", "<=", nowTs)
+      .orderBy("cardPurgeAt", "asc")
+      .limit(100)
+      .get();
+    const purgeDocs = snap.docs;
 
     for (const doc of purgeDocs) {
       const vData = doc.data();
-      const p = typeof vData.cardStoragePath === "string" ? vData.cardStoragePath : null;
+      const p =
+        typeof vData.cardStoragePath === "string" && vData.cardStoragePath
+          ? vData.cardStoragePath
+          : typeof vData.cardImagePath === "string" && vData.cardImagePath
+          ? vData.cardImagePath
+          : null;
       let deleteOk = true;
 
       if (p && p.startsWith("private/cards/")) {
@@ -97,8 +133,14 @@ export const GET = withApi(async (request: NextRequest) => {
         } catch (storageErr) {
           deleteOk = false;
           errorsCount++;
-          console.error(`[CRON_PURGE_CARDS] Lỗi xóa file ${p} của hồ sơ ${doc.id}:`, storageErr);
-          await doc.ref.update({ cardDeletePending: true });
+          console.error("[CRON_PURGE_CARDS] Lỗi xóa file thẻ theo cardPurgeAt:", redactErrorMessage(storageErr));
+          await doc.ref.update({ cardDeletePending: true }).catch(() => undefined);
+          await enqueueCardCleanupJob({
+            targetPath: p,
+            ownerUid: doc.id,
+            reason: "card_purge_retry",
+            err: storageErr,
+          });
         }
       }
 
@@ -177,6 +219,8 @@ export const GET = withApi(async (request: NextRequest) => {
                   cardStoragePath: null,
                   cardImagePath: null,
                   cardImagePreviewUrl: null,
+                  cardPurgeAt: FieldValue.delete(),
+                  cardDeletePending: FieldValue.delete(),
                   cardImagePurgedAt: FieldValue.serverTimestamp(),
                   cardAutoDeletedAt: FieldValue.serverTimestamp(),
                 });
@@ -186,7 +230,13 @@ export const GET = withApi(async (request: NextRequest) => {
           }
         } catch (itemErr) {
           errorsCount++;
-          console.error(`[CRON_PURGE_CARDS] Lỗi kiểm tra file Storage ${file.name}:`, itemErr);
+          console.error("[CRON_PURGE_CARDS] Lỗi kiểm tra file Storage:", redactErrorMessage(itemErr));
+          await enqueueCardCleanupJob({
+            targetPath: file.name,
+            ownerUid: userId,
+            reason: "card_orphan_retry",
+            err: itemErr,
+          });
         }
       }
 
@@ -195,21 +245,26 @@ export const GET = withApi(async (request: NextRequest) => {
         nextStorageToken = nextQuery.pageToken;
       } else {
         nextStorageToken = undefined;
+      }
+
+      // Lưu tiến độ cursor ngay sau mỗi trang để tránh mất tiến độ nếu timeout ở trang sau
+      await cursorRef
+        .set(
+          {
+            storagePageToken: nextStorageToken || null,
+            lastRunAt: FieldValue.serverTimestamp(),
+            lastPurgedCount: purgedCount,
+            lastOrphanPurgedCount: orphanPurgedCount,
+            lastErrorsCount: errorsCount,
+          },
+          { merge: true }
+        )
+        .catch(() => undefined);
+
+      if (!nextStorageToken) {
         break;
       }
     }
-
-    // Lưu state cursor vào Firestore doc
-    await cursorRef.set(
-      {
-        storagePageToken: nextStorageToken || null,
-        lastRunAt: FieldValue.serverTimestamp(),
-        lastPurgedCount: purgedCount,
-        lastOrphanPurgedCount: orphanPurgedCount,
-        lastErrorsCount: errorsCount,
-      },
-      { merge: true }
-    );
   } catch (error) {
     console.error("[CRON_PURGE_CARDS_ERROR] Lỗi khi dọn dẹp ảnh thẻ định kỳ:", error);
     throw error;
@@ -219,10 +274,14 @@ export const GET = withApi(async (request: NextRequest) => {
     `[CRON_PURGE_CARDS_DONE] Đã xóa ${purgedCount} ảnh thẻ quá hạn 30 ngày, ${orphanPurgedCount} ảnh mồ côi (lỗi: ${errorsCount}).`
   );
 
-  return NextResponse.json({
-    success: true,
-    purgedCount,
-    orphanPurgedCount,
-    errorsCount,
-  });
+  return NextResponse.json(
+    {
+      success: errorsCount === 0,
+      partialFailure: errorsCount > 0,
+      purgedCount,
+      orphanPurgedCount,
+      errorsCount,
+    },
+    { status: errorsCount > 0 ? 207 : 200 }
+  );
 });

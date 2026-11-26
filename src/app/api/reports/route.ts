@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/server/auth-guard";
+import { requireActiveUser } from "@/lib/server/auth-guard";
 import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
@@ -22,7 +22,7 @@ const reportSchema = z
   .strict();
 
 export const POST = withApi(async (req: NextRequest) => {
-  const auth = await requireAuth(req);
+  const auth = await requireActiveUser(req);
   const reporterId = auth.uid;
   const { targetType, targetId, reason, details } = reportSchema.parse(await readJson(req));
 

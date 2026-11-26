@@ -4,17 +4,25 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, Search, PlusCircle, MessageSquare, User } from "lucide-react";
+import { useAuth } from "@/lib/auth/AuthContext";
 import { cn } from "@/lib/utils";
 
 export function MobileBottomNav() {
   const pathname = usePathname();
+  const { user, profile, role } = useAuth();
+
+  const postListingHref = !user
+    ? `/auth/login?next=${encodeURIComponent("/listings/new")}`
+    : role === "admin" || role === "verified" || profile?.verificationStatus === "approved"
+    ? "/listings/new"
+    : "/auth/onboarding";
 
   const navItems = [
     { label: "Trang chủ", href: "/", icon: Home },
     { label: "Tìm kiếm", href: "/search", icon: Search },
     {
       label: "Đăng tin",
-      href: "/listings/new",
+      href: postListingHref,
       icon: PlusCircle,
       isSpecial: true,
     },
@@ -25,7 +33,7 @@ export function MobileBottomNav() {
   return (
     <nav
       aria-label="Thanh điều hướng di động"
-      className="fixed bottom-0 left-0 right-0 z-40 bg-surface/95 backdrop-blur-md border-t border-surface-border md:hidden"
+      className="fixed bottom-0 left-0 right-0 z-40 bg-surface/95 backdrop-blur-md border-t border-surface-border pb-[env(safe-area-inset-bottom,0px)] md:hidden"
     >
       <div className="flex items-center justify-around h-16 px-2 max-w-lg mx-auto">
         {navItems.map((item) => {

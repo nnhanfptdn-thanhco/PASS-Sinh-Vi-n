@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/server/auth-guard";
 import { withApi, ApiError } from "@/lib/server/http";
 import { assertAdminSdkReady } from "@/lib/server/admin-ready";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
+import { isValidFirestoreId, rejectDuplicateQueryParams } from "@/lib/server/request-utils";
 import { adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
 
 export const runtime = "nodejs";
@@ -12,8 +14,17 @@ export const GET = withApi(async (req: NextRequest) => {
   const admin = await requireAdmin(req);
   assertAdminSdkReady();
 
-  const userId = new URL(req.url).searchParams.get("userId") || "";
-  if (!userId || userId.length > 128 || userId.includes("/")) {
+  await consumeRateLimit({
+    scope: "admin_card_view",
+    key: admin.uid,
+    limit: 60,
+    windowSec: 600,
+  });
+
+  const sp = new URL(req.url).searchParams;
+  rejectDuplicateQueryParams(sp, ["userId"]);
+  const userId = sp.get("userId") || "";
+  if (!isValidFirestoreId(userId)) {
     throw new ApiError(400, "INVALID_USER_ID", "userId không hợp lệ.");
   }
 

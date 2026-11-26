@@ -20,11 +20,23 @@ import {
   Phone,
   ShieldAlert,
   Lock,
+  MessageCircle,
+  Flag,
 } from "lucide-react";
 import { formatCurrencyVND } from "@/lib/utils";
+import { copyCurrentUrlToClipboard } from "@/lib/utils/webview";
 import { authFetch } from "@/lib/firebase/client";
 import type { PublicListingDTO, PublicSellerProfile } from "@/lib/services/listings";
 import { formatDeadlineVN } from "@/lib/utils/date";
+
+type DeliveryMethodKey = "pickup" | "sellerDelivery" | "campusDelivery" | "carrierShipping";
+
+const DELIVERY_METHOD_LABELS: Record<DeliveryMethodKey, string> = {
+  pickup: "Tự đến lấy",
+  sellerDelivery: "Nhờ người bán ship",
+  campusDelivery: "Giao trong khuôn viên trường",
+  carrierShipping: "Gửi đơn vị vận chuyển",
+};
 
 export function ListingDetailClient({
   listing,
@@ -37,29 +49,110 @@ export function ListingDetailClient({
   const { user, profile } = useAuth();
 
   const [activeImageIndex, setActiveImageIndex] = React.useState(0);
-  const [isFavorite, setIsFavorite] = React.useState(false);
+  const [isFavorited, setIsFavorited] = React.useState(false);
   const [copiedLink, setCopiedLink] = React.useState(false);
 
-  // Xem liên hệ state
+  // Xem liên hệ state (gộp cả contact lẫn privateDetails.exactAddress & detailedSchedule)
   const [sellerContact, setSellerContact] = React.useState<{
-    zaloPhone?: string;
-    altPhone?: string;
-    exactAddress?: string;
-    dormOrAddress?: string;
+    zaloPhone?: string | null;
+    altPhone?: string | null;
+    exactAddress?: string | null;
+    detailedSchedule?: string | null;
   } | null>(null);
   const [isLoadingContact, setIsLoadingContact] = React.useState(false);
+  const [isStartingChat, setIsStartingChat] = React.useState(false);
   const [contactError, setContactError] = React.useState<string | null>(null);
+
+  // Danh sách phương thức nhận hàng thực tế mà người bán hỗ trợ
+  const availableDeliveryMethods = React.useMemo<DeliveryMethodKey[]>(() => {
+    const sm = listing.shippingMethods || { pickup: true, sellerDelivery: false, carrierShipping: false };
+    const list: DeliveryMethodKey[] = [];
+    if (sm.pickup) list.push("pickup");
+    if (sm.campusDelivery) list.push("campusDelivery");
+    if (sm.sellerDelivery) list.push("sellerDelivery");
+    if (sm.carrierShipping) list.push("carrierShipping");
+    return list.length > 0 ? list : ["pickup"];
+  }, [listing.shippingMethods]);
 
   // Giữ chỗ modal state
   const [isReserveModalOpen, setIsReserveModalOpen] = React.useState(false);
-  const [reserveMethod, setReserveMethod] = React.useState<"pickup" | "sellerDelivery">("pickup");
+  const [reserveMethod, setReserveMethod] = React.useState<DeliveryMethodKey>(
+    availableDeliveryMethods[0]
+  );
   const [preferredTime, setPreferredTime] = React.useState("Chiều mai khoảng 17h30");
   const [isSubmittingReserve, setIsSubmittingReserve] = React.useState(false);
   const [reserveSuccess, setReserveSuccess] = React.useState(false);
   const [reserveError, setReserveError] = React.useState<string | null>(null);
 
+  // Báo cáo tin đăng state
+  const [isReportModalOpen, setIsReportModalOpen] = React.useState(false);
+  const [reportReason, setReportReason] = React.useState<
+    "scam" | "wrong_description" | "banned_goods" | "duplicate" | "spam" | "other"
+  >("scam");
+  const [reportDetails, setReportDetails] = React.useState("");
+  const [isSubmittingReport, setIsSubmittingReport] = React.useState(false);
+  const [reportFeedback, setReportFeedback] = React.useState<string | null>(null);
+  const [reportError, setReportError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setReserveMethod(availableDeliveryMethods[0]);
+  }, [availableDeliveryMethods]);
+
+  // Đồng bộ trạng thái yêu thích ban đầu khi user đăng nhập
+  React.useEffect(() => {
+    if (!user) {
+      setIsFavorited(false);
+      return;
+    }
+    let cancelled = false;
+    authFetch("/api/favorites/toggle")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.listingIds)) {
+          setIsFavorited(data.listingIds.includes(listing.id));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [user, listing.id]);
+
   const isOwner = Boolean(user && user.uid === listing.sellerId);
   const isReserved = listing.status === "reserved";
+
+  const handleStartChat = async () => {
+    if (!user) {
+      router.push(`/auth/login?next=/listings/${listing.id}`);
+      return;
+    }
+    if (!profile?.verified) {
+      setContactError("Tài khoản cần được phê duyệt thẻ sinh viên trước khi nhắn tin với người bán.");
+      return;
+    }
+
+    setIsStartingChat(true);
+    setContactError(null);
+    try {
+      const res = await authFetch("/api/conversations/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          otherUserId: listing.sellerId,
+          listingId: listing.id,
+        }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.conversationId) {
+        throw new Error(json?.error || "Không thể mở cuộc trò chuyện.");
+      }
+      router.push(`/messages?conversationId=${encodeURIComponent(json.conversationId)}`);
+    } catch (err: unknown) {
+      setContactError(err instanceof Error ? err.message : "Không thể kết nối phòng chat.");
+    } finally {
+      setIsStartingChat(false);
+    }
+  };
 
   const handleRevealContact = async () => {
     if (!user) {
@@ -85,7 +178,12 @@ export function ListingDetailClient({
         setContactError(data.error?.message || data.error || "Không thể lấy số liên hệ");
         return;
       }
-      setSellerContact(data.contact);
+      setSellerContact({
+        zaloPhone: data.contact?.zaloPhone ?? null,
+        altPhone: data.contact?.altPhone ?? null,
+        exactAddress: data.privateDetails?.exactAddress ?? data.contact?.exactAddress ?? null,
+        detailedSchedule: data.privateDetails?.detailedSchedule ?? null,
+      });
     } catch {
       setContactError("Lỗi kết nối máy chủ");
     } finally {
@@ -103,21 +201,16 @@ export function ListingDetailClient({
         });
         return;
       } catch {
-        // Fallback
+        // Fallback sang copy link
       }
     }
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      try {
-        await navigator.clipboard.writeText(window.location.href);
-        setCopiedLink(true);
-        setTimeout(() => setCopiedLink(false), 2500);
-      } catch {
-        // Fallback
-      }
+    const ok = await copyCurrentUrlToClipboard();
+    if (ok) {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
     }
   };
 
-  const [isFavorited, setIsFavorited] = React.useState(false);
   const handleToggleFavorite = async () => {
     if (!user) {
       router.push(`/auth/login?next=/listings/${listing.id}`);
@@ -134,6 +227,38 @@ export function ListingDetailClient({
       if (!res.ok) setIsFavorited(!nextVal);
     } catch {
       setIsFavorited(!nextVal);
+    }
+  };
+
+  const handleSubmitReport = async () => {
+    if (!user) {
+      router.push(`/auth/login?next=/listings/${listing.id}`);
+      return;
+    }
+    setIsSubmittingReport(true);
+    setReportError(null);
+    try {
+      const res = await authFetch("/api/reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetType: "listing",
+          targetId: listing.id,
+          reason: reportReason,
+          details: reportDetails.trim() || undefined,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setReportError(json.error || "Không thể gửi báo cáo lúc này.");
+        return;
+      }
+      setReportFeedback(json.message || "Đã ghi nhận báo cáo của bạn.");
+      setReportDetails("");
+    } catch {
+      setReportError("Lỗi kết nối máy chủ khi gửi báo cáo.");
+    } finally {
+      setIsSubmittingReport(false);
     }
   };
 
@@ -194,12 +319,31 @@ export function ListingDetailClient({
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => setIsFavorite(!isFavorite)}
+            onClick={handleToggleFavorite}
+            aria-label={isFavorited ? "Bỏ yêu thích" : "Lưu yêu thích"}
           >
             <Heart
-              className={`w-3.5 h-3.5 ${isFavorite ? "fill-red-500 text-red-500" : ""}`}
+              className={`w-3.5 h-3.5 ${isFavorited ? "fill-red-500 text-red-500" : ""}`}
             />
           </Button>
+          {!isOwner && (
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Flag className="w-3.5 h-3.5 text-red-500" />}
+              onClick={() => {
+                if (!user) {
+                  router.push(`/auth/login?next=/listings/${listing.id}`);
+                  return;
+                }
+                setReportError(null);
+                setReportFeedback(null);
+                setIsReportModalOpen(true);
+              }}
+            >
+              Báo cáo
+            </Button>
+          )}
         </div>
       </div>
 
@@ -377,6 +521,18 @@ export function ListingDetailClient({
                 {isReserved ? "Đã Có Người Giữ Chỗ" : "Giữ Chỗ Món Đồ Này"}
               </Button>
 
+              <Button
+                variant="outline"
+                size="md"
+                className="w-full font-semibold"
+                leftIcon={<MessageCircle className="w-4 h-4 text-primary" />}
+                isLoading={isStartingChat}
+                disabled={isStartingChat}
+                onClick={handleStartChat}
+              >
+                Nhắn tin người bán
+              </Button>
+
               {/* Theo Phương án A: SĐT & Zalo được bảo mật, chỉ mở khi người bán xác nhận giữ chỗ */}
               {sellerContact ? (
                 <div className="p-3 bg-surface rounded-xl border border-primary/40 space-y-1.5 text-xs">
@@ -396,6 +552,12 @@ export function ListingDetailClient({
                     <div className="pt-1 border-t border-surface-border">
                       <span className="font-semibold text-text-secondary block">Địa chỉ nhận đồ chính xác:</span>
                       <span className="text-text-main">{sellerContact.exactAddress}</span>
+                    </div>
+                  )}
+                  {sellerContact.detailedSchedule && (
+                    <div className="pt-1 border-t border-surface-border">
+                      <span className="font-semibold text-text-secondary block">Khung giờ nhận hàng chi tiết:</span>
+                      <span className="text-text-main">{sellerContact.detailedSchedule}</span>
                     </div>
                   )}
                 </div>
@@ -587,29 +749,21 @@ export function ListingDetailClient({
               <label className="font-bold text-text-main block">
                 Phương thức nhận hàng mong muốn *
               </label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setReserveMethod("pickup")}
-                  className={`p-3 rounded-xl border text-center font-semibold transition-all ${
-                    reserveMethod === "pickup"
-                      ? "border-primary bg-primary-light text-primary"
-                      : "border-surface-border text-text-secondary hover:bg-surface-muted"
-                  }`}
-                >
-                  Tự đến lấy
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setReserveMethod("sellerDelivery")}
-                  className={`p-3 rounded-xl border text-center font-semibold transition-all ${
-                    reserveMethod === "sellerDelivery"
-                      ? "border-primary bg-primary-light text-primary"
-                      : "border-surface-border text-text-secondary hover:bg-surface-muted"
-                  }`}
-                >
-                  Nhờ người bán ship
-                </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {availableDeliveryMethods.map((methodKey) => (
+                  <button
+                    key={methodKey}
+                    type="button"
+                    onClick={() => setReserveMethod(methodKey)}
+                    className={`p-3 rounded-xl border text-center font-semibold transition-all ${
+                      reserveMethod === methodKey
+                        ? "border-primary bg-primary-light text-primary"
+                        : "border-surface-border text-text-secondary hover:bg-surface-muted"
+                    }`}
+                  >
+                    {DELIVERY_METHOD_LABELS[methodKey]}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -647,6 +801,84 @@ export function ListingDetailClient({
                 onClick={handleConfirmReservation}
               >
                 Xác Nhận Gửi Yêu Cầu
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* MODAL BÁO CÁO TIN ĐĂNG VI PHẠM */}
+      <Modal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        title="Báo cáo tin đăng vi phạm"
+        description="Báo cáo của bạn sẽ được gửi trực tiếp tới Ban Quản Trị để kiểm tra bảo vệ cộng đồng sinh viên."
+      >
+        {reportFeedback ? (
+          <div className="space-y-4 py-3 text-center">
+            <div className="w-12 h-12 rounded-full bg-verified-bg text-verified-border mx-auto flex items-center justify-center">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+            <p className="text-xs text-text-main font-medium">{reportFeedback}</p>
+            <Button variant="primary" size="sm" onClick={() => setIsReportModalOpen(false)}>
+              Đóng
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4 text-xs">
+            {reportError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700">
+                {reportError}
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <label className="font-bold text-text-main block">Lý do báo cáo *</label>
+              <select
+                value={reportReason}
+                onChange={(e) =>
+                  setReportReason(
+                    e.target.value as
+                      | "scam"
+                      | "wrong_description"
+                      | "banned_goods"
+                      | "duplicate"
+                      | "spam"
+                      | "other"
+                  )
+                }
+                className="w-full h-11 px-3 bg-surface border border-surface-border rounded-lg text-text-main"
+              >
+                <option value="scam">Dấu hiệu lừa đảo / đòi cọc trước</option>
+                <option value="wrong_description">Mô tả sai sự thật / ảnh không thực tế</option>
+                <option value="banned_goods">Hàng cấm / vi phạm pháp luật</option>
+                <option value="duplicate">Đăng tin trùng lặp</option>
+                <option value="spam">Spam / chèn SĐT quảng cáo</option>
+                <option value="other">Lý do khác</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="font-bold text-text-main block">Chi tiết bổ sung (tùy chọn)</label>
+              <textarea
+                rows={3}
+                value={reportDetails}
+                onChange={(e) => setReportDetails(e.target.value)}
+                maxLength={1000}
+                placeholder="Mô tả ngắn gọn vấn đề bạn phát hiện..."
+                className="w-full p-3 bg-surface border border-surface-border rounded-lg text-text-main"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setIsReportModalOpen(false)}>
+                Hủy
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                isLoading={isSubmittingReport}
+                disabled={isSubmittingReport}
+                onClick={handleSubmitReport}
+              >
+                Gửi báo cáo
               </Button>
             </div>
           </div>

@@ -16,6 +16,12 @@ import {
   LogOut,
   ChevronDown,
   ShieldAlert,
+  Sparkles,
+  MessageSquare,
+  Bell,
+  Clock,
+  LifeBuoy,
+  Shield,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth/AuthContext";
@@ -128,14 +134,74 @@ export function Header() {
         </div>
 
         {/* Cụm công cụ bên phải */}
-        <div className="flex items-center gap-2">
-          {/* Nút tìm kiếm nhanh trên mobile */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Nút tìm kiếm nhanh (mobile & iPad/desktop) */}
           <Link
             href="/search"
             aria-label="Tìm kiếm món đồ"
-            className="sm:hidden w-9 h-9 rounded-lg border border-surface-border flex items-center justify-center text-text-secondary hover:text-text-main transition-colors"
+            className={`w-9 h-9 rounded-lg border flex items-center justify-center transition-colors ${
+              pathname === "/search"
+                ? "border-primary bg-primary-light text-primary"
+                : "border-surface-border text-text-secondary hover:text-text-main"
+            }`}
           >
             <Search className="w-4 h-4" />
+          </Link>
+
+          {/* Liên kết Tin nhắn, Giữ chỗ & Thông báo cho iPad (md+) và Desktop */}
+          {user && (
+            <>
+              <Link
+                href="/messages"
+                aria-label="Tin nhắn"
+                title="Tin nhắn"
+                className={`hidden md:inline-flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${
+                  pathname?.startsWith("/messages")
+                    ? "border-primary bg-primary-light text-primary"
+                    : "border-surface-border text-text-secondary hover:text-text-main"
+                }`}
+              >
+                <MessageSquare className="w-4 h-4" />
+              </Link>
+              <Link
+                href="/reservations"
+                aria-label="Giữ chỗ"
+                title="Quản lý giữ chỗ"
+                className={`hidden md:inline-flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${
+                  pathname?.startsWith("/reservations")
+                    ? "border-primary bg-primary-light text-primary"
+                    : "border-surface-border text-text-secondary hover:text-text-main"
+                }`}
+              >
+                <Clock className="w-4 h-4" />
+              </Link>
+              <Link
+                href="/notifications"
+                aria-label="Thông báo"
+                title="Thông báo"
+                className={`inline-flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${
+                  pathname?.startsWith("/notifications")
+                    ? "border-primary bg-primary-light text-primary"
+                    : "border-surface-border text-text-secondary hover:text-text-main"
+                }`}
+              >
+                <Bell className="w-4 h-4" />
+              </Link>
+            </>
+          )}
+
+          {/* Nút NnhanAI Assistant */}
+          <Link
+            href="/ai"
+            className={`inline-flex items-center justify-center font-semibold rounded-lg transition-colors h-9 px-2.5 text-xs border gap-1.5 ${
+              pathname === "/ai"
+                ? "bg-indigo-600 text-white border-indigo-600"
+                : "border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100"
+            }`}
+            aria-label="Trợ lý NnhanAI"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">NnhanAI</span>
           </Link>
 
           {/* Đổi màu Sáng/Tối */}
@@ -227,6 +293,33 @@ export function Header() {
                       <span>Tin của tôi</span>
                     </Link>
 
+                    <Link
+                      href="/reservations"
+                      role="menuitem"
+                      className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-text-main hover:bg-surface-muted rounded-xl transition-colors"
+                    >
+                      <Clock className="w-4 h-4 text-primary shrink-0" />
+                      <span>Quản lý giữ chỗ</span>
+                    </Link>
+
+                    <Link
+                      href="/messages"
+                      role="menuitem"
+                      className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-text-main hover:bg-surface-muted rounded-xl transition-colors"
+                    >
+                      <MessageSquare className="w-4 h-4 text-primary shrink-0" />
+                      <span>Tin nhắn 1-1</span>
+                    </Link>
+
+                    <Link
+                      href="/notifications"
+                      role="menuitem"
+                      className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-text-main hover:bg-surface-muted rounded-xl transition-colors"
+                    >
+                      <Bell className="w-4 h-4 text-primary shrink-0" />
+                      <span>Thông báo</span>
+                    </Link>
+
                     {verificationStatus !== "approved" && (
                       <Link
                         href="/auth/onboarding"
@@ -248,6 +341,24 @@ export function Header() {
                         <span>Quản trị duyệt thẻ</span>
                       </Link>
                     )}
+
+                    <Link
+                      href="/safety"
+                      role="menuitem"
+                      className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-text-main hover:bg-surface-muted rounded-xl transition-colors"
+                    >
+                      <Shield className="w-4 h-4 text-text-secondary shrink-0" />
+                      <span>Cẩm nang an toàn</span>
+                    </Link>
+
+                    <Link
+                      href="/support"
+                      role="menuitem"
+                      className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-text-main hover:bg-surface-muted rounded-xl transition-colors"
+                    >
+                      <LifeBuoy className="w-4 h-4 text-text-secondary shrink-0" />
+                      <span>Hỗ trợ & Kháng nghị</span>
+                    </Link>
 
                     <Link
                       href="/settings"

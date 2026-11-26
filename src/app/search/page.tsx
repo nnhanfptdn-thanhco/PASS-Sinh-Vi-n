@@ -3,13 +3,14 @@
 import * as React from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthContext";
-import { Search, Filter, SlidersHorizontal, RefreshCw } from "lucide-react";
+import { Search, Filter, SlidersHorizontal, RefreshCw, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { ListingCard } from "@/components/ui/ListingCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { UniversitySelect } from "@/components/ui/UniversitySelect";
+import { authFetch } from "@/lib/firebase/client";
 import categoriesData from "../../../data/categories.json";
 import provincesData from "../../../data/provinces_34.json";
 import type { PublicListingDTO } from "@/lib/services/listings";
@@ -32,6 +33,7 @@ function SearchContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { profile, user } = useAuth();
+  const searchParamsKey = searchParams.toString();
 
   const [query, setQuery] = React.useState(searchParams.get("q") || "");
   const [selectedCategory, setSelectedCategory] = React.useState(searchParams.get("category") || "all");
@@ -44,9 +46,94 @@ function SearchContent() {
   const [sortBy, setSortBy] = React.useState(searchParams.get("sort") || "relevant");
 
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = React.useState(false);
-  const [isLoading, setIsLoading] = React.useState(false);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isLoadingMore, setIsLoadingMore] = React.useState(false);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
   const [items, setItems] = React.useState<PublicListingDTO[]>([]);
+  const [nextCursor, setNextCursor] = React.useState<string | undefined>(undefined);
+  const [favoriteIds, setFavoriteIds] = React.useState<Set<string>>(new Set());
+
+  const lastPushedQueryRef = React.useRef<string>(searchParamsKey);
+
+  // Đồng bộ lại state khi URL thay đổi (nút Back/Forward hoặc bấm link lọc từ trang chủ)
+  React.useEffect(() => {
+    if (searchParamsKey === lastPushedQueryRef.current) return;
+    lastPushedQueryRef.current = searchParamsKey;
+
+    setQuery(searchParams.get("q") || "");
+    setSelectedCategory(searchParams.get("category") || "all");
+    const wantSameSchool = searchParams.get("sameSchool") === "true";
+    setSelectedSchool(
+      wantSameSchool && profile?.schoolCode
+        ? profile.schoolCode
+        : searchParams.get("school") || "all"
+    );
+    setSelectedProvince(searchParams.get("province") || "all");
+    setOnlyUrgent(searchParams.get("urgent") === "true");
+    setOnlyShipping(searchParams.get("shipping") === "true");
+    setMinPrice(searchParams.get("minPrice") || "");
+    setMaxPrice(searchParams.get("maxPrice") || "");
+    setSortBy(searchParams.get("sort") || "relevant");
+  }, [searchParamsKey, searchParams, profile?.schoolCode]);
+
+  // Hỗ trợ ?sameSchool=true ngay khi profile.schoolCode sẵn sàng
+  React.useEffect(() => {
+    if (searchParams.get("sameSchool") === "true" && profile?.schoolCode && selectedSchool === "all") {
+      setSelectedSchool(profile.schoolCode);
+    }
+  }, [searchParams, profile?.schoolCode, selectedSchool]);
+
+  // Đồng bộ trạng thái yêu thích ban đầu
+  React.useEffect(() => {
+    if (!user) {
+      setFavoriteIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    authFetch("/api/favorites/toggle")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.listingIds)) {
+          setFavoriteIds(new Set(data.listingIds));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const buildSearchQueryParams = React.useCallback(
+    (cursor?: string) => {
+      const params = new URLSearchParams();
+      if (query.trim()) params.set("q", query.trim());
+      if (selectedCategory !== "all") params.set("category", selectedCategory);
+      if (selectedSchool !== "all") params.set("school", selectedSchool);
+      if (selectedProvince !== "all") params.set("province", selectedProvince);
+      if (onlyUrgent) params.set("urgent", "true");
+      if (onlyShipping) params.set("shipping", "true");
+      if (minPrice) params.set("minPrice", minPrice);
+      if (maxPrice) params.set("maxPrice", maxPrice);
+      if (sortBy) params.set("sort", sortBy);
+      if (profile?.schoolCode) params.set("viewerSchool", profile.schoolCode);
+      if (profile?.provinceCode) params.set("viewerProvince", profile.provinceCode);
+      if (cursor) params.set("cursor", cursor);
+      return params;
+    },
+    [
+      query,
+      selectedCategory,
+      selectedSchool,
+      selectedProvince,
+      onlyUrgent,
+      onlyShipping,
+      minPrice,
+      maxPrice,
+      sortBy,
+      profile?.schoolCode,
+      profile?.provinceCode,
+    ]
+  );
 
   // Đồng bộ bộ lọc lên URL
   const syncParamsToUrl = React.useCallback(() => {
@@ -62,7 +149,10 @@ function SearchContent() {
     if (sortBy !== "relevant") params.set("sort", sortBy);
 
     const queryString = params.toString();
-    router.replace(queryString ? `/search?${queryString}` : "/search", { scroll: false });
+    if (queryString !== lastPushedQueryRef.current) {
+      lastPushedQueryRef.current = queryString;
+      router.replace(queryString ? `/search?${queryString}` : "/search", { scroll: false });
+    }
   }, [query, selectedCategory, selectedSchool, selectedProvince, onlyUrgent, onlyShipping, minPrice, maxPrice, sortBy, router]);
 
   // Thực hiện tìm kiếm với AbortController
@@ -72,19 +162,7 @@ function SearchContent() {
       setFetchError(null);
 
       try {
-        const params = new URLSearchParams();
-        if (query.trim()) params.set("q", query.trim());
-        if (selectedCategory !== "all") params.set("category", selectedCategory);
-        if (selectedSchool !== "all") params.set("school", selectedSchool);
-        if (selectedProvince !== "all") params.set("province", selectedProvince);
-        if (onlyUrgent) params.set("urgent", "true");
-        if (onlyShipping) params.set("shipping", "true");
-        if (minPrice) params.set("minPrice", minPrice);
-        if (maxPrice) params.set("maxPrice", maxPrice);
-        if (sortBy) params.set("sort", sortBy);
-        if (profile?.schoolCode) params.set("viewerSchool", profile.schoolCode);
-        if (profile?.provinceCode) params.set("viewerProvince", profile.provinceCode);
-
+        const params = buildSearchQueryParams();
         const res = await fetch(`/api/listings/search?${params.toString()}`, { signal });
         if (!res.ok) {
           throw new Error("Lỗi khi tải kết quả tìm kiếm");
@@ -92,18 +170,44 @@ function SearchContent() {
 
         const data = await res.json();
         setItems(Array.isArray(data.items) ? data.items : []);
+        setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : undefined);
       } catch (err: unknown) {
         if ((err as Error).name !== "AbortError") {
           console.error("Lỗi tìm kiếm:", err);
           setFetchError("Không thể tải kết quả tìm kiếm. Vui lòng thử lại.");
           setItems([]);
+          setNextCursor(undefined);
         }
       } finally {
-        setIsLoading(false);
+        if (!signal?.aborted) {
+          setIsLoading(false);
+        }
       }
     },
-    [query, selectedCategory, selectedSchool, selectedProvince, onlyUrgent, onlyShipping, minPrice, maxPrice, sortBy, profile]
+    [buildSearchQueryParams]
   );
+
+  const handleLoadMore = async () => {
+    if (!nextCursor || isLoadingMore) return;
+    setIsLoadingMore(true);
+    try {
+      const params = buildSearchQueryParams(nextCursor);
+      const res = await fetch(`/api/listings/search?${params.toString()}`);
+      if (!res.ok) throw new Error("Không thể tải thêm kết quả");
+      const data = await res.json();
+      if (Array.isArray(data.items)) {
+        setItems((prev) => {
+          const seen = new Set(prev.map((i) => i.id));
+          return [...prev, ...data.items.filter((i: PublicListingDTO) => !seen.has(i.id))];
+        });
+      }
+      setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : undefined);
+    } catch {
+      setFetchError("Không thể tải thêm tin đăng. Vui lòng thử lại.");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
 
   // Debounce tìm kiếm 300ms và hủy request cũ khi thay đổi input
   React.useEffect(() => {
@@ -121,7 +225,7 @@ function SearchContent() {
 
   const handleToggleSameSchool = () => {
     if (!user) {
-      router.push("/auth/login?next=/search");
+      router.push("/auth/login?next=/search?sameSchool=true");
       return;
     }
     if (selectedSchool === profile?.schoolCode) {
@@ -250,7 +354,7 @@ function SearchContent() {
               <select
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
-                className="w-full h-10 px-3 bg-surface border border-surface-border rounded-lg text-xs text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
+                className="w-full h-11 px-3 bg-surface border border-surface-border rounded-lg text-xs text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="all">Tất cả danh mục</option>
                 {categoriesData.map((c) => (
@@ -264,6 +368,9 @@ function SearchContent() {
             <div className="space-y-1">
               <label className="text-xs font-semibold text-text-secondary">Trường đại học / CĐ</label>
               <UniversitySelect
+                label=""
+                allowAll={true}
+                allLabel="Tất cả các trường toàn quốc"
                 value={selectedSchool}
                 onChange={(code) => setSelectedSchool(code)}
                 placeholder="Chọn trường đại học..."
@@ -275,7 +382,7 @@ function SearchContent() {
               <select
                 value={selectedProvince}
                 onChange={(e) => setSelectedProvince(e.target.value)}
-                className="w-full h-10 px-3 bg-surface border border-surface-border rounded-lg text-xs text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
+                className="w-full h-11 px-3 bg-surface border border-surface-border rounded-lg text-xs text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="all">Toàn quốc</option>
                 {provincesData.map((p) => (
@@ -310,7 +417,7 @@ function SearchContent() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold text-text-secondary">
-            Tìm thấy {items.length} món đồ phù hợp
+            {isLoading ? "Đang tìm kiếm..." : `Tìm thấy ${items.length} món đồ phù hợp`}
           </span>
           <Badge variant="near">
             {selectedSchool !== "all"
@@ -350,28 +457,52 @@ function SearchContent() {
             actionHref="/listings/new"
           />
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-            {items.map((item) => (
-              <ListingCard
-                key={item.id}
-                id={item.id}
-                title={item.title}
-                price={item.price}
-                originalPrice={item.originalPrice}
-                imageUrl={item.coverThumb || item.coverImage}
-                urgent={item.urgentPass}
-                hasShipping={
-                  item.shippingMethods?.sellerDelivery ||
-                  item.shippingMethods?.carrierShipping
-                }
-                schoolName={item.schoolName || item.schoolCode || "Sinh viên"}
-                passDeadline={formatDeadlineVN(item.passDeadline)}
-                proximity={getProximity(item)}
-                campusDelivery={item.shippingMethods?.campusDelivery}
-                condition={item.condition}
-              />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+              {items.map((item) => (
+                <ListingCard
+                  key={item.id}
+                  id={item.id}
+                  title={item.title}
+                  price={item.price}
+                  originalPrice={item.originalPrice}
+                  imageUrl={item.coverThumb || item.coverImage}
+                  urgent={item.urgentPass}
+                  hasShipping={
+                    item.shippingMethods?.sellerDelivery ||
+                    item.shippingMethods?.carrierShipping
+                  }
+                  schoolName={item.schoolName || item.schoolCode || "Sinh viên"}
+                  passDeadline={formatDeadlineVN(item.passDeadline)}
+                  proximity={getProximity(item)}
+                  campusDelivery={item.shippingMethods?.campusDelivery}
+                  condition={item.condition}
+                  isFavorite={favoriteIds.has(item.id)}
+                />
+              ))}
+            </div>
+
+            {nextCursor && (
+              <div className="flex justify-center pt-4">
+                <Button
+                  variant="secondary"
+                  size="md"
+                  disabled={isLoadingMore}
+                  onClick={handleLoadMore}
+                  className="w-full sm:w-auto px-8"
+                >
+                  {isLoadingMore ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Đang tải thêm...
+                    </span>
+                  ) : (
+                    "Tải thêm tin đăng"
+                  )}
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

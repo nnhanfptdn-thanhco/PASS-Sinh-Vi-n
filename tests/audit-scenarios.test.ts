@@ -194,15 +194,29 @@ describe("PHASE 7: Bộ kiểm thử chuyên sâu cho toàn bộ 14 kịch bản
 
   describe("5. [F16] Search Parameter Clamping & Resilience", () => {
     it("GET /api/listings/search: không bị crash khi minPrice=abc, sort=hack, limit=999999", async () => {
-      vi.spyOn(adminDb, "collection").mockReturnValue({
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockReturnThis(),
-        get: vi.fn().mockResolvedValue({
-          empty: true,
-          docs: [],
-        }),
-      } as any);
+      vi.spyOn(adminDb, "collection").mockImplementation((colName: string) => {
+        if (colName === "rateLimits") {
+          return {
+            doc: vi.fn().mockReturnValue({ id: "mock-rate-limit" }),
+          } as any;
+        }
+        return {
+          where: vi.fn().mockReturnThis(),
+          orderBy: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          get: vi.fn().mockResolvedValue({
+            empty: true,
+            docs: [],
+          }),
+        } as any;
+      });
+
+      vi.spyOn(adminDb, "runTransaction").mockImplementation(async (cb: any) => {
+        return cb({
+          get: vi.fn().mockResolvedValue({ exists: false, data: () => null }),
+          set: vi.fn(),
+        });
+      });
 
       const { GET } = await import("../src/app/api/listings/search/route");
       const req = new NextRequest(

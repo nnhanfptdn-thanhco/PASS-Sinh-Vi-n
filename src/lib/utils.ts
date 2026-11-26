@@ -6,6 +6,27 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Sinh mã ID ngẫu nhiên an toàn trên mọi trình duyệt (kể cả Safari iOS/iPadOS cũ
+ * hoặc chạy thử qua mạng LAN HTTP nơi crypto.randomUUID không khả dụng).
+ */
+export function safeRandomId(prefix = "id"): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    }
+    if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+      const bytes = new Uint8Array(8);
+      crypto.getRandomValues(bytes);
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      return `${prefix}_${hex}`;
+    }
+  } catch {
+    // Fallback cuối
+  }
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
  * Định dạng tiền tệ VNĐ (ví dụ: 150000 -> 150.000 đ, 0 -> Tặng miễn phí)
  */
 export function formatCurrencyVND(amount: number): string {

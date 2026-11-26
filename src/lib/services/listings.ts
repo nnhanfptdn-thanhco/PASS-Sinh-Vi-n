@@ -143,9 +143,12 @@ export function toPublicListingDTO(
  * - expired, sold, hidden -> Không hiển thị công khai (404 / Ẩn khỏi tìm kiếm)
  */
 export function isListingPubliclyVisible(
-  listing: { status: string; passDeadline?: string },
+  listing: { status: string; passDeadline?: string; operationStatus?: unknown },
   now: Date = new Date()
 ): boolean {
+  if (listing.operationStatus) {
+    return false;
+  }
   if (listing.status !== "active" && listing.status !== "reserved") {
     return false;
   }
@@ -206,7 +209,16 @@ export async function getPublicListingById(
   }
 
   const data = docSnap.data() as Record<string, unknown>;
-  if (!isListingPubliclyVisible({ status: data.status as string, passDeadline: data.passDeadline as string }, now)) {
+  if (
+    !isListingPubliclyVisible(
+      {
+        status: data.status as string,
+        passDeadline: data.passDeadline as string,
+        operationStatus: data.operationStatus,
+      },
+      now
+    )
+  ) {
     return null;
   }
 
@@ -249,7 +261,7 @@ export async function getSellerActiveListings(
   querySnap.forEach((doc) => {
     const data = doc.data() as Record<string, unknown>;
     const passDeadline = (data.passDeadline as string) || "";
-    if (passDeadline >= currentToday) {
+    if (!data.operationStatus && passDeadline >= currentToday) {
       validListings.push(toPublicListingDTO(data, doc.id));
     }
   });
@@ -402,26 +414,31 @@ export async function searchListings(
   let useCompound = true;
   const matchedItems: PublicListingDTO[] = [];
   let scanned = 0;
-  let lastDocSnap: FirebaseFirestore.DocumentSnapshot | undefined = undefined;
+  let lastMatchedDocId: string | undefined = undefined;
+  let lastScannedDocSnap: FirebaseFirestore.DocumentSnapshot | undefined = undefined;
+  let hasMoreMatches = false;
   let exhausted = false;
   let currentAfter = cursorSnap;
 
-  while (matchedItems.length < limitCount && scanned < MAX_SCANNED && !exhausted) {
+  // Thu thập tới limitCount + 1 bản ghi khớp để biết chính xác còn trang tiếp theo hay không,
+  // tránh lỗi đặt exhausted = true khi vòng lặp dừng sớm lúc snap.docs.length < BATCH_SIZE.
+  while (matchedItems.length <= limitCount && scanned < MAX_SCANNED && !exhausted) {
     let snap: FirebaseFirestore.QuerySnapshot | undefined;
     try {
       snap = await runPage(useCompound, currentAfter);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       const errorCode = (err as { code?: number })?.code;
-      if (useCompound && (errorCode === 9 || errorMsg.includes("FAILED_PRECONDITION") || errorMsg.includes("requires an index"))) {
+      if (
+        useCompound &&
+        (errorCode === 9 ||
+          errorMsg.includes("FAILED_PRECONDITION") ||
+          errorMsg.includes("requires an index"))
+      ) {
         useCompound = false;
-        try {
-          snap = await runPage(false, currentAfter);
-        } catch {
-          break;
-        }
+        snap = await runPage(false, currentAfter);
       } else {
-        break;
+        throw err;
       }
     }
 
@@ -430,12 +447,15 @@ export async function searchListings(
       break;
     }
 
-    for (const doc of snap.docs) {
+    let brokeEarly = false;
+    for (let i = 0; i < snap.docs.length; i++) {
+      const doc = snap.docs[i];
       scanned++;
-      lastDocSnap = doc;
+      lastScannedDocSnap = doc;
       const data = doc.data() as Record<string, unknown>;
       const passDeadline = (data.passDeadline as string) || "";
 
+      if (data.operationStatus) continue;
       if (passDeadline < currentToday) continue;
       if (params.category && data.categoryId !== params.category) continue;
       if (params.school && data.schoolCode !== params.school) continue;
@@ -452,7 +472,7 @@ export async function searchListings(
       if (normalizedKeywords.length > 0) {
         const titleNorm =
           (data.titleNormalized as string) ||
-          (data.title as string || "")
+          ((data.title as string) || "")
             .toLowerCase()
             .normalize("NFD")
             .replace(/[\u0300-\u036f]/g, "")
@@ -467,15 +487,25 @@ export async function searchListings(
         if (!matchesAllKeywords) continue;
       }
 
-      matchedItems.push(toPublicListingDTO(data, doc.id));
-      if (matchedItems.length >= limitCount) break;
+      if (matchedItems.length < limitCount) {
+        matchedItems.push(toPublicListingDTO(data, doc.id));
+        lastMatchedDocId = doc.id;
+      } else {
+        hasMoreMatches = true;
+        brokeEarly = true;
+        break;
+      }
+    }
+
+    if (brokeEarly) {
+      break;
     }
 
     if (snap.docs.length < BATCH_SIZE) {
       exhausted = true;
       break;
     }
-    currentAfter = lastDocSnap;
+    currentAfter = lastScannedDocSnap;
   }
 
   // Sắp xếp lại in-memory nếu fallback không dùng compound index
@@ -510,7 +540,11 @@ export async function searchListings(
     });
   }
 
-  const nextCursor = !exhausted && lastDocSnap ? lastDocSnap.id : undefined;
+  const nextCursor = hasMoreMatches
+    ? lastMatchedDocId
+    : !exhausted && lastScannedDocSnap
+    ? lastScannedDocSnap.id
+    : undefined;
 
   return {
     items: matchedItems,

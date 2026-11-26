@@ -158,13 +158,6 @@
       ]
     },
     {
-      "collectionGroup": "verifications",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "cardPurgeAt", "order": "ASCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "favorites",
       "queryScope": "COLLECTION",
       "fields": [
@@ -179,18 +172,97 @@
         { "fieldPath": "participantIds", "arrayConfig": "CONTAINS" },
         { "fieldPath": "updatedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "aiConversations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerUid", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "uploadSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerUid", "order": "ASCENDING" },
+        { "fieldPath": "kind", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "uploadSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pendingDeletions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "deadLetter", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "claimsSyncJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "deadLetter", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "storageCleanupJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "deadLetter", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "listingOperationJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "deadLetter", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
     {
       "collectionGroup": "rateLimits",
       "fieldPath": "windowExpiresAt",
-      "ttl": true
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" }
+      ]
     },
     {
       "collectionGroup": "idempotency",
       "fieldPath": "expiresAt",
-      "ttl": true
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "collectionGroup": "userUploadQuotas",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" }
+      ]
+    },
+    {
+      "collectionGroup": "userAiQuotas",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" }
+      ]
     }
   ]
 }

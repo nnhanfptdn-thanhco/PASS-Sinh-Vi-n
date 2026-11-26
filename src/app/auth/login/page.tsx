@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import {
   isAndroidDevice,
+  isIOSDevice,
   getAndroidChromeIntentUrl,
   copyCurrentUrlToClipboard,
 } from "@/lib/utils/webview";
@@ -33,6 +34,7 @@ function LoginForm() {
     profile,
     role,
     isLoading: isAuthLoading,
+    isVerificationLoaded,
     isSigningIn,
     loginWithGoogle,
     isWebView,
@@ -42,17 +44,18 @@ function LoginForm() {
 
   const [copied, setCopied] = React.useState(false);
   const [isAndroid, setIsAndroid] = React.useState(false);
+  const [isIOS, setIsIOS] = React.useState(false);
 
   React.useEffect(() => {
     setIsAndroid(isAndroidDevice());
+    setIsIOS(isIOSDevice());
   }, []);
 
-  // Điều hướng dựa trên trạng thái người dùng
+  // Điều hướng dựa trên trạng thái người dùng (chờ isVerificationLoaded để không redirect sai sang /auth/onboarding)
   React.useEffect(() => {
     if (user && !isAuthLoading) {
       const vStatus = profile?.verificationStatus;
 
-      // Người dùng đã có hồ sơ duyệt hoặc đang chờ duyệt -> điều hướng về targetNext hoặc trang chủ
       if (
         role === "admin" ||
         role === "verified" ||
@@ -60,12 +63,14 @@ function LoginForm() {
         vStatus === "pending"
       ) {
         router.replace(targetNext !== "/" ? targetNext : "/");
-      } else if (vStatus === "none" || vStatus === "rejected" || vStatus === "expired") {
-        // Người dùng chưa nộp thẻ sinh viên -> chuyển sang trang nộp thẻ xác thực
+      } else if (
+        isVerificationLoaded &&
+        (vStatus === "none" || vStatus === "rejected" || vStatus === "expired")
+      ) {
         router.replace("/auth/onboarding");
       }
     }
-  }, [user, profile, role, isAuthLoading, targetNext, router]);
+  }, [user, profile, role, isAuthLoading, isVerificationLoaded, targetNext, router]);
 
   const handleGoogleLogin = async () => {
     clearError();
@@ -107,7 +112,9 @@ function LoginForm() {
             <span>Phát hiện trình duyệt Zalo/Facebook</span>
           </div>
           <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
-            Google bảo mật chặn đăng nhập trong app Zalo/Facebook/TikTok. Vui lòng mở bằng trình duyệt hệ thống bên ngoài để tiếp tục an toàn.
+            {isIOS
+              ? "Google bảo mật chặn đăng nhập trong trình duyệt nhúng của Zalo/Facebook/TikTok trên iPhone & iPad. Vui lòng bấm biểu tượng la bàn Safari hoặc nút ba chấm (...) rồi chọn 'Mở bằng Safari', hoặc sao chép liên kết bên dưới dán vào Safari."
+              : "Google bảo mật chặn đăng nhập trong app Zalo/Facebook/TikTok. Vui lòng mở bằng trình duyệt hệ thống bên ngoài để tiếp tục an toàn."}
           </p>
           <div className="flex flex-col gap-2 pt-1">
             {isAndroid && (

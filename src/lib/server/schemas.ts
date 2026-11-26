@@ -2,6 +2,12 @@ import { z } from "zod";
 import { containsContactInfo } from "@/lib/utils/contact-filter";
 import { todayVN, addDaysVN } from "@/lib/utils/date";
 
+export const FIRESTORE_ID_SCHEMA = z
+  .string()
+  .min(1, "Thiếu mã định danh")
+  .max(128, "Mã định danh quá dài")
+  .regex(/^[A-Za-z0-9_-]{1,128}$/, "Mã định danh chứa ký tự không hợp lệ");
+
 /**
  * Kiểm tra xem văn bản công khai có chứa thông tin liên hệ không
  */
@@ -24,9 +30,9 @@ export const createListingSchema = z
       .trim()
       .min(10, "Tên món đồ phải từ 10 ký tự trở lên")
       .max(80, "Tên món đồ không được vượt quá 80 ký tự"),
-    categoryId: z.string().min(1, "Vui lòng chọn danh mục"),
-    subcategory: z.string().optional(),
-    condition: z.string().min(1, "Vui lòng chọn tình trạng món đồ"),
+    categoryId: z.string().min(1, "Vui lòng chọn danh mục").max(64),
+    subcategory: z.string().max(100).optional(),
+    condition: z.string().min(1, "Vui lòng chọn tình trạng món đồ").max(80),
     brandModel: z.string().max(80).optional(),
     usageTime: z.string().max(50).optional(),
     defects: z.string().max(500).optional(),
@@ -57,25 +63,28 @@ export const createListingSchema = z
         const maxDeadline = addDaysVN(today, 60);
         return val >= today && val <= maxDeadline;
       }, "Hạn pass phải nằm trong khoảng từ hôm nay đến tối đa 60 ngày tới"),
-    schoolCode: z.string().optional(),
-    campusId: z.string().optional(),
-    provinceCode: z.string().optional(),
-    wardCode: z.string().optional(),
+    schoolCode: z.string().max(32).optional(),
+    campusId: z.string().max(64).optional(),
+    provinceCode: z.string().max(32).optional(),
+    wardCode: z.string().max(32).optional(),
     publicMeetingPoint: z.string().max(120).optional().default("Cổng trường"),
     exactAddress: z.string().max(200).optional(),
     detailedSchedule: z.string().max(300).optional(),
-    shippingMethods: z.object({
-      pickup: z.boolean().default(true),
-      sellerDelivery: z.boolean().default(false),
-      carrierShipping: z.boolean().default(false),
-      campusDelivery: z.boolean().default(false),
-      shipFeeNote: z.string().max(200).optional(),
-    }),
+    shippingMethods: z
+      .object({
+        pickup: z.boolean().default(true),
+        sellerDelivery: z.boolean().default(false),
+        carrierShipping: z.boolean().default(false),
+        campusDelivery: z.boolean().default(false),
+        shipFeeNote: z.string().max(200).optional(),
+      })
+      .strict(),
     itemDimensions: z
       .object({
-        weight: z.union([z.string().max(50), z.number()]).optional(),
+        weight: z.union([z.string().max(50), z.number().finite().nonnegative().max(10000)]).optional(),
         dimensions: z.string().max(100).optional(),
       })
+      .strict()
       .nullable()
       .optional(),
     images: z
@@ -88,7 +97,7 @@ export const createListingSchema = z
 
 export const contactRequestSchema = z
   .object({
-    listingId: z.string().min(1, "Thiếu listingId"),
+    listingId: FIRESTORE_ID_SCHEMA,
   })
   .strict();
 

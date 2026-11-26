@@ -63,7 +63,7 @@ function extractApiError(json: unknown, status: number): string {
   return `Yêu cầu thất bại (HTTP ${status}).`;
 }
 
-export default function AdminVerificationsPage() {
+function AdminVerificationsContent() {
   const { user, adminClaimMissing } = useAuth();
   const [items, setItems] = React.useState<VerificationItem[]>([]);
   const [filter, setFilter] = React.useState<AdminFilter>("pending");
@@ -178,7 +178,6 @@ export default function AdminVerificationsPage() {
   };
 
   return (
-    <RequireAdmin>
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         {/* Tiêu đề & Thống kê */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-surface-border pb-5">
@@ -495,6 +494,13 @@ export default function AdminVerificationsPage() {
           </div>
         </Modal>
       </div>
+  );
+}
+
+export default function AdminVerificationsPage() {
+  return (
+    <RequireAdmin>
+      <AdminVerificationsContent />
     </RequireAdmin>
   );
 }

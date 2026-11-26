@@ -4,7 +4,10 @@ import { requireAdmin } from "@/lib/server/auth-guard";
 import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { assertAdminSdkReady } from "@/lib/server/admin-ready";
 import { setVerifiedClaim } from "@/lib/server/claims";
-import { adminDb, adminStorage, FieldValue } from "@/lib/firebase/admin";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
+import { rejectDuplicateQueryParams } from "@/lib/server/request-utils";
+import { FIRESTORE_ID_SCHEMA } from "@/lib/server/schemas";
+import { adminDb, FieldValue } from "@/lib/firebase/admin";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -16,11 +19,7 @@ type VerificationStatus = (typeof STATUSES)[number];
 
 const actionSchema = z
   .object({
-    userId: z
-      .string()
-      .min(1, "Thiếu userId")
-      .max(128)
-      .refine((v) => !v.includes("/"), "userId không hợp lệ"),
+    userId: FIRESTORE_ID_SCHEMA,
     action: z.enum(["approve", "reject"]),
     reason: z.string().max(300).optional(),
     note: z.string().max(300).optional(),
@@ -34,10 +33,18 @@ function noStore(res: NextResponse): NextResponse {
 
 // GET: danh sách hồ sơ (chỉ Admin). KHÔNG trả ảnh thẻ — ảnh lấy riêng qua /card.
 export const GET = withApi(async (req: NextRequest) => {
-  await requireAdmin(req);
+  const admin = await requireAdmin(req);
   assertAdminSdkReady();
 
+  await consumeRateLimit({
+    scope: "admin_verifications_read",
+    key: admin.uid,
+    limit: 60,
+    windowSec: 600,
+  });
+
   const sp = new URL(req.url).searchParams;
+  rejectDuplicateQueryParams(sp, ["status", "limit"]);
   const status = (sp.get("status") || "pending") as VerificationStatus;
   if (!STATUSES.includes(status)) {
     throw new ApiError(400, "INVALID_STATUS", "Trạng thái lọc không hợp lệ.");
@@ -122,6 +129,13 @@ export const GET = withApi(async (req: NextRequest) => {
 export const POST = withApi(async (req: NextRequest) => {
   const adminToken = await requireAdmin(req);
   assertAdminSdkReady();
+
+  await consumeRateLimit({
+    scope: "admin_verifications_action",
+    key: adminToken.uid,
+    limit: 60,
+    windowSec: 600,
+  });
 
   const { userId, action, reason, note } = actionSchema.parse(await readJson(req));
   const adminEmail = adminToken.email || "admin";
@@ -231,8 +245,8 @@ export const POST = withApi(async (req: NextRequest) => {
   }
 
   // ===================== TỪ CHỐI =====================
-  // Bước 1 (nguyên tử): đổi trạng thái + thông báo + log + xóa ảnh Data URL ngay trong document
-  const { storagePath } = await adminDb.runTransaction(async (tx) => {
+  // Ghi nguyên tử: đổi trạng thái + thông báo + log + đặt cardPurgeAt = now + 30 ngày trong cùng transaction
+  await adminDb.runTransaction(async (tx) => {
     const snap = await tx.get(verificationRef);
     if (!snap.exists) {
       throw new ApiError(404, "VERIFICATION_NOT_FOUND", "Không tìm thấy hồ sơ xác minh");
@@ -243,7 +257,6 @@ export const POST = withApi(async (req: NextRequest) => {
     }
     const p = typeof v.cardStoragePath === "string" ? v.cardStoragePath : null;
     const isDataUrl = !!p && p.startsWith("data:image/");
-    const isStoragePath = !!p && p.startsWith(`private/cards/${userId}/`);
 
     const purgeDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     tx.update(verificationRef, {
@@ -257,13 +270,12 @@ export const POST = withApi(async (req: NextRequest) => {
       rejectNote: cleanNote,
       ...(isDataUrl
         ? {
-            cardStoragePath: null, // xóa NGAY ảnh Data URL (PDP 2025)
+            cardStoragePath: null, // xóa NGAY ảnh Data URL cũ để không làm phình Firestore doc
             cardDeleted: true,
             cardAutoDeletedAt: FieldValue.serverTimestamp(),
             cardPurgeAt: FieldValue.delete(),
           }
         : {}),
-      ...(isStoragePath ? { cardDeletePending: true } : {}), // đánh dấu để cron thử lại nếu xóa Storage lỗi
     });
     tx.set(
       userRef,
@@ -293,36 +305,18 @@ export const POST = withApi(async (req: NextRequest) => {
       note: cleanNote,
       timestamp: FieldValue.serverTimestamp(),
     });
-    return { storagePath: isStoragePath ? p : null };
   });
 
-  // Bước 2 (best-effort, không làm hỏng kết quả): xóa file trong Storage
-  let cardDeleted = true;
-  if (storagePath) {
-    try {
-      await adminStorage.bucket().file(storagePath).delete({ ignoreNotFound: true });
-      await verificationRef.update({
-        cardDeleted: true,
-        cardStoragePath: null,
-        cardDeletePending: FieldValue.delete(),
-        cardPurgeAt: FieldValue.delete(),
-        cardAutoDeletedAt: FieldValue.serverTimestamp(),
-      });
-    } catch (e) {
-      cardDeleted = false;
-      console.error("[REJECT] delete card failed (cardDeletePending=true, cron phải thử lại)", e instanceof Error ? e.message : "unknown");
-    }
-  }
-
-  // Bước 3 (best-effort): gỡ claim verified nếu có, không bao giờ làm rớt quyền admin
+  // Bước 2 (best-effort): gỡ claim verified nếu có, không bao giờ làm rớt quyền admin
   const claimsSynced = await setVerifiedClaim(userId, false);
 
   return noStore(
     NextResponse.json({
       success: true,
       claimsSynced,
-      cardDeleted,
-      message: "Đã từ chối hồ sơ xác minh.",
+      cardDeleted: false,
+      cardPurgeAtScheduled: true,
+      message: "Đã từ chối hồ sơ xác minh. Ảnh thẻ được lên lịch xóa tự động sau 30 ngày (hoặc qua cron).",
     })
   );
 });

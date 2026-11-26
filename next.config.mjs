@@ -1,26 +1,43 @@
 /** @type {import('next').NextConfig} */
 const isDev = process.env.NODE_ENV !== "production";
 
-const firebaseProjectId =
-  process.env.FIREBASE_PROJECT_ID ||
-  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-  (isDev ? "cho-pass-sv-dev" : undefined);
+const explicitProjectId =
+  process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
 
-if (!firebaseProjectId && process.env.VERCEL_ENV === "production") {
+if (!explicitProjectId && process.env.VERCEL_ENV === "production") {
   throw new Error(
     "Thiếu FIREBASE_PROJECT_ID / NEXT_PUBLIC_FIREBASE_PROJECT_ID cho môi trường production."
   );
 }
 
+const firebaseProjectId = explicitProjectId || (isDev ? "cho-pass-sv-dev" : "cho-pass-sv");
+
+const configuredBuckets = Array.from(
+  new Set(
+    [
+      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+      process.env.FIREBASE_STORAGE_BUCKET,
+      `${firebaseProjectId}.firebasestorage.app`,
+      `${firebaseProjectId}.appspot.com`,
+      "cho-pass-sv.firebasestorage.app",
+      "cho-pass-sv.appspot.com",
+    ].filter(Boolean)
+  )
+);
+
 const remotePatterns = [
-  {
-    protocol: "https",
-    hostname: "firebasestorage.googleapis.com",
-  },
-  {
-    protocol: "https",
-    hostname: "storage.googleapis.com",
-  },
+  ...configuredBuckets.flatMap((bucket) => [
+    {
+      protocol: "https",
+      hostname: "firebasestorage.googleapis.com",
+      pathname: `/v0/b/${bucket}/**`,
+    },
+    {
+      protocol: "https",
+      hostname: "storage.googleapis.com",
+      pathname: `/${bucket}/**`,
+    },
+  ]),
   {
     protocol: "https",
     hostname: "images.unsplash.com",
@@ -43,6 +60,10 @@ if (isDev) {
     }
   );
 }
+
+const cspScriptSrc = isDev
+  ? "'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://accounts.google.com"
+  : "'self' 'unsafe-inline' https://apis.google.com https://accounts.google.com";
 
 const nextConfig = {
   images: {
@@ -99,7 +120,7 @@ const nextConfig = {
           {
             key: "Content-Security-Policy-Report-Only",
             value:
-              "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://accounts.google.com; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://firebasestorage.googleapis.com https://accounts.google.com; frame-src 'self' https://*.firebaseapp.com https://accounts.google.com; img-src 'self' blob: data: https://firebasestorage.googleapis.com https://storage.googleapis.com https://images.unsplash.com https://lh3.googleusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self';",
+              `default-src 'self'; script-src ${cspScriptSrc}; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://firebasestorage.googleapis.com https://accounts.google.com; frame-src 'self' https://*.firebaseapp.com https://accounts.google.com; img-src 'self' blob: data: https://firebasestorage.googleapis.com https://storage.googleapis.com https://images.unsplash.com https://lh3.googleusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';`,
           },
         ],
       },

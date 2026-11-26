@@ -1,25 +1,25 @@
 /**
  * SCRIPT MIGRATION: DỌN DẸP DỮ LIỆU BASE64 CŨ TRONG FIRESTORE
- * 
- * Hỗ trợ cờ --dry-run để chạy kiểm tra số lượng mà không ghi đè dữ liệu.
- * 
- * Thực hiện:
- * 1. verifications: Nếu cardStoragePath bắt đầu bằng 'data:', xoá cardStoragePath,
- *    đánh dấu cardDeleted = true, chuyển status: 'expired' nếu đang pending.
- * 2. listings: Nếu images, thumbs, coverImage, hoặc coverThumb chứa chuỗi Base64 'data:',
- *    chuyển status: 'hidden_by_admin' và gửi notification yêu cầu người bán đăng lại ảnh qua Storage.
+ *
+ * AN TOÀN: Mặc định chạy DRY-RUN (không ghi DB). Chỉ ghi dữ liệu khi truyền tường minh --apply.
+ *
+ * Cách dùng:
+ *   npx tsx scripts/cleanup-base64.ts          # Dry-run
+ *   npx tsx scripts/cleanup-base64.ts --apply  # Thực thi thực tế
  */
 
+import "dotenv/config";
+import * as crypto from "crypto";
 import { getApps, initializeApp, cert } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
-const isDryRun = process.argv.includes("--dry-run");
+const applyChanges = process.argv.includes("--apply") && !process.argv.includes("--dry-run");
 
 console.log("==========================================================");
-console.log(`   DỌN DẸP BASE64 LEGACY ${isDryRun ? "[DRY-RUN MODE]" : "[LIVE RUN]"}   `);
+console.log(`   DỌN DẸP BASE64 LEGACY ${applyChanges ? "[APPLY MODE]" : "[DRY-RUN MODE]"}   `);
 console.log("==========================================================");
 
-const isEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR !== "false";
+const isEmulator = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true";
 if (isEmulator && !process.env.FIRESTORE_EMULATOR_HOST) {
   process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";
   process.env.FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099";
@@ -30,10 +30,10 @@ const app =
   getApps().length > 0
     ? getApps()[0]
     : initializeApp(
-        process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL
+        process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL && !isEmulator
           ? {
               credential: cert({
-                projectId: process.env.FIREBASE_PROJECT_ID || "cho-pass-sv-dev",
+                projectId: process.env.FIREBASE_PROJECT_ID || "cho-pass-sv",
                 clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
                 privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
               }),
@@ -44,6 +44,11 @@ const app =
       );
 
 const db = getFirestore(app);
+
+function computeTitleHash(title: string): string {
+  const normalized = title.trim().toLowerCase().replace(/\s+/g, " ");
+  return crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 32);
+}
 
 async function runCleanup() {
   let scannedVerifications = 0;
@@ -79,7 +84,8 @@ async function runCleanup() {
       };
       if (data.status === "pending") {
         updatePayload.status = "expired";
-        updatePayload.rejectReason = "Ảnh thẻ sinh viên cũ không hợp lệ (Base64). Vui lòng gửi lại ảnh.";
+        updatePayload.rejectReason =
+          "Ảnh thẻ sinh viên cũ không hợp lệ (Base64). Vui lòng gửi lại ảnh.";
         updatePayload.decidedAt = FieldValue.serverTimestamp();
       }
       verifUpdates.push({ ref: doc.ref, data: updatePayload });
@@ -96,9 +102,12 @@ async function runCleanup() {
 
   const listingUpdates: Array<{
     ref: FirebaseFirestore.DocumentReference;
+    id: string;
     data: Record<string, unknown>;
+    wasActiveOrReserved: boolean;
     sellerId: string;
     listingTitle: string;
+    titleHash: string;
   }> = [];
 
   for (const doc of listingsSnap.docs) {
@@ -114,32 +123,40 @@ async function runCleanup() {
       coverImage.startsWith("data:") ||
       coverThumb.startsWith("data:");
 
-    if (hasBase64) {
+    if (hasBase64 && data.status !== "hidden_by_admin") {
       affectedListings++;
+      const title = (data.title as string) || "Món đồ";
       listingUpdates.push({
         ref: doc.ref,
+        id: doc.id,
+        wasActiveOrReserved: data.status === "active" || data.status === "reserved",
         data: {
           status: "hidden_by_admin",
+          images: images.filter((u) => typeof u === "string" && !u.startsWith("data:")),
+          thumbs: thumbs.filter((u) => typeof u === "string" && !u.startsWith("data:")),
+          coverImage: coverImage.startsWith("data:") ? "" : coverImage,
+          coverThumb: coverThumb.startsWith("data:") ? "" : coverThumb,
           updatedAt: FieldValue.serverTimestamp(),
-          adminHiddenReason: "Ảnh tin đăng dạng Base64 legacy không được hỗ trợ. Vui lòng cập nhật lại ảnh tin đăng.",
+          adminHiddenReason:
+            "Ảnh tin đăng dạng Base64 legacy không được hỗ trợ. Vui lòng cập nhật lại ảnh tin đăng.",
         },
-        sellerId: data.sellerId as string,
-        listingTitle: (data.title as string) || "Món đồ",
+        sellerId: (data.sellerId as string) || "",
+        listingTitle: title,
+        titleHash: computeTitleHash(title),
       });
     }
   }
 
   console.log(
-    `-> Listings: Đã quét ${scannedListings} tin đăng, phát hiện ${affectedListings} chứa Base64.`
+    `-> Listings: Đã quét ${scannedListings} tin đăng, phát hiện ${affectedListings} chứa Base64 cần ẩn.`
   );
 
-  if (isDryRun) {
-    console.log("\n[DRY RUN HOÀN TẤT] Không có thay đổi nào được ghi vào cơ sở dữ liệu.");
+  if (!applyChanges) {
+    console.log("\n[DRY RUN HOÀN TẤT] Không có thay đổi nào được ghi vào DB. Truyền --apply để thực thi.");
     return;
   }
 
-  // Thực hiện ghi dữ liệu nếu không phải dry-run (theo batch <= 400)
-  console.log("\n-> Đang commit các thay đổi...");
+  console.log("\n-> Đang thực hiện cập nhật đồng bộ...");
   let batch = db.batch();
   let count = 0;
 
@@ -152,33 +169,58 @@ async function runCleanup() {
       count = 0;
     }
   }
-
-  for (const update of listingUpdates) {
-    batch.update(update.ref, update.data);
-    count++;
-    // Tạo notification cho người bán
-    if (update.sellerId) {
-      const notifRef = db.collection("notifications").doc();
-      batch.set(notifRef, {
-        userId: update.sellerId,
-        type: "listing_hidden",
-        title: "Tin đăng tạm ẩn để nâng cấp ảnh",
-        body: `Tin đăng "${update.listingTitle}" tạm thời bị ẩn do ảnh dạng cũ. Bạn vui lòng tải lại ảnh thực tế để tiếp tục hiển thị nhé!`,
-        read: false,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-      count++;
-    }
-
-    if (count >= 400) {
-      await batch.commit();
-      batch = db.batch();
-      count = 0;
-    }
-  }
-
   if (count > 0) {
     await batch.commit();
+  }
+
+  // Cập nhật từng listing qua transaction để giữ đồng bộ sellerListingStats & sellerTitleLocks
+  for (const update of listingUpdates) {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(update.ref);
+      if (!snap.exists) return;
+      const cur = snap.data() || {};
+      const stillLive = cur.status === "active" || cur.status === "reserved";
+
+      let statsSnap: FirebaseFirestore.DocumentSnapshot | null = null;
+      let lockSnap: FirebaseFirestore.DocumentSnapshot | null = null;
+      const statsRef = update.sellerId ? db.collection("sellerListingStats").doc(update.sellerId) : null;
+      const lockRef =
+        update.sellerId && update.titleHash
+          ? db.collection("sellerTitleLocks").doc(`${update.sellerId}_${update.titleHash}`)
+          : null;
+
+      if (stillLive && statsRef) {
+        statsSnap = await tx.get(statsRef);
+      }
+      if (stillLive && lockRef) {
+        lockSnap = await tx.get(lockRef);
+      }
+
+      tx.update(update.ref, update.data);
+
+      if (stillLive && statsRef && statsSnap?.exists) {
+        const curActive = Number(statsSnap.data()?.activeCount || 0);
+        tx.set(
+          statsRef,
+          { activeCount: Math.max(0, curActive - 1), updatedAt: FieldValue.serverTimestamp() },
+          { merge: true }
+        );
+      }
+      if (stillLive && lockRef && lockSnap?.exists && lockSnap.data()?.listingId === update.id) {
+        tx.delete(lockRef);
+      }
+      if (update.sellerId) {
+        const notifRef = db.collection("notifications").doc();
+        tx.set(notifRef, {
+          userId: update.sellerId,
+          type: "listing_hidden",
+          title: "Tin đăng tạm ẩn để nâng cấp ảnh",
+          body: `Tin đăng "${update.listingTitle}" tạm thời bị ẩn do ảnh dạng cũ. Bạn vui lòng đăng lại ảnh thực tế nhé!`,
+          read: false,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      }
+    });
   }
 
   console.log("-> Hoàn tất ghi dữ liệu thành công!");

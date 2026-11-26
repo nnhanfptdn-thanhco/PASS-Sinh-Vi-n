@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import {
   requireUser,
@@ -9,7 +9,32 @@ import {
 } from "../src/lib/auth/server";
 import { adminAuth, adminDb } from "../src/lib/firebase/admin";
 
-describe("Kiểm tra Server Auth Guards (src/lib/auth/server.ts)", () => {
+function mockActiveCollections(verifData?: { status: string; schoolCode?: string }) {
+  vi.spyOn(adminDb, "collection").mockImplementation((col: string) => {
+    if (col === "verifications") {
+      return {
+        doc: () => ({
+          get: vi.fn().mockResolvedValue(
+            verifData
+              ? { exists: true, data: () => verifData }
+              : { exists: false, data: () => null }
+          ),
+        }),
+      } as any;
+    }
+    return {
+      doc: () => ({
+        get: vi.fn().mockResolvedValue({ exists: false, data: () => null }),
+      }),
+    } as any;
+  });
+}
+
+describe("Kiểm tra Server Auth Guards (src/lib/auth/server.ts -> auth-guard.ts)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("Không có header Authorization -> quăng lỗi HttpError 401", async () => {
     const req = new NextRequest("http://localhost:3000/api/listings/create");
     await expect(requireUser(req)).rejects.toThrow("Vui lòng đăng nhập.");
@@ -34,6 +59,9 @@ describe("Kiểm tra Server Auth Guards (src/lib/auth/server.ts)", () => {
     });
 
     await expect(requireUser(req)).rejects.toThrow("Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
+    vi.spyOn(adminAuth, "verifyIdToken").mockRejectedValueOnce(
+      new Error("Firebase ID token has expired")
+    );
     await expect(requireUser(req)).rejects.toMatchObject({ status: 401 });
   });
 
@@ -45,11 +73,7 @@ describe("Kiểm tra Server Auth Guards (src/lib/auth/server.ts)", () => {
       admin: false,
     } as any);
 
-    vi.spyOn(adminDb, "collection").mockReturnValue({
-      doc: () => ({
-        get: vi.fn().mockResolvedValue({ exists: false, data: () => null }),
-      }),
-    } as any);
+    mockActiveCollections();
 
     const req = new NextRequest("http://localhost:3000/api/listings/create", {
       headers: { authorization: "Bearer valid-token" },
@@ -69,14 +93,7 @@ describe("Kiểm tra Server Auth Guards (src/lib/auth/server.ts)", () => {
       admin: false,
     } as any);
 
-    vi.spyOn(adminDb, "collection").mockReturnValue({
-      doc: () => ({
-        get: vi.fn().mockResolvedValue({
-          exists: true,
-          data: () => ({ status: "approved", schoolCode: "HCMUT" }),
-        }),
-      }),
-    } as any);
+    mockActiveCollections({ status: "approved", schoolCode: "HCMUT" });
 
     const req = new NextRequest("http://localhost:3000/api/listings/create", {
       headers: { authorization: "Bearer valid-token" },
@@ -95,13 +112,15 @@ describe("Kiểm tra Server Auth Guards (src/lib/auth/server.ts)", () => {
       admin: false,
     } as any);
 
+    mockActiveCollections();
+
     const req = new NextRequest("http://localhost:3000/api/admin/verifications", {
       headers: { authorization: "Bearer valid-token" },
     });
 
     await expect(requireAdmin(req)).rejects.toMatchObject({
       status: 403,
-      message: "Chỉ quản trị viên mới có quyền này.",
+      code: "FORBIDDEN_NOT_ADMIN",
     });
   });
 
@@ -112,6 +131,8 @@ describe("Kiểm tra Server Auth Guards (src/lib/auth/server.ts)", () => {
       verified: true,
       admin: true,
     } as any);
+
+    mockActiveCollections();
 
     const req = new NextRequest("http://localhost:3000/api/admin/verifications", {
       headers: { authorization: "Bearer valid-token" },

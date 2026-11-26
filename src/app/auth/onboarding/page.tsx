@@ -26,12 +26,18 @@ import universitiesData from "../../../../data/universities_vietnam.json";
 import provincesData from "../../../../data/provinces_34.json";
 import wardsData from "../../../../data/communes_wards.json";
 
-const UPLOAD_TIMEOUT_MS = 12_000;
+const UPLOAD_TIMEOUT_MS = 15_000;
 const API_TIMEOUT_MS = 20_000;
-const MAX_DATA_URL_CHARS = 480 * 1024; // server giới hạn 500 * 1024 ký tự
 
 function extractApiError(json: unknown, status: number): string {
-  const j = json as { error?: unknown; message?: unknown } | null;
+  const j = json as {
+    error?: unknown;
+    message?: unknown;
+    issues?: Array<{ message?: string }>;
+  } | null;
+  if (Array.isArray(j?.issues) && j.issues.length > 0 && typeof j.issues[0]?.message === "string") {
+    return j.issues[0].message;
+  }
   if (typeof j?.error === "string") return j.error;
   const nested = j?.error as { message?: unknown } | undefined;
   if (typeof nested?.message === "string") return nested.message;
@@ -39,22 +45,26 @@ function extractApiError(json: unknown, status: number): string {
   return `Máy chủ từ chối hồ sơ (HTTP ${status}). Vui lòng thử lại.`;
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onloadend = () => resolve(String(r.result));
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(blob);
-  });
+function normalizePhoneInput(raw: string): string {
+  return raw.replace(/[\s.-]+/g, "").trim();
 }
 
 /** Upload có timeout THỰC SỰ: hết giờ thì hủy task, không để file mồ côi chạy ngầm. */
-function uploadWithTimeout(path: string, blob: Blob, contentType: string, ms: number): Promise<void> {
+function uploadWithTimeout(
+  path: string,
+  blob: Blob,
+  contentType: string,
+  sessionId: string,
+  ms: number
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const task = uploadBytesResumable(ref(storage, path), blob, { contentType });
+    const task = uploadBytesResumable(ref(storage, path), blob, {
+      contentType,
+      customMetadata: { sessionId },
+    });
     const timer = setTimeout(() => {
       task.cancel();
-      reject(new Error("STORAGE_TIMEOUT"));
+      reject(new Error("Quá thời gian tải ảnh thẻ lên lưu trữ. Vui lòng thử lại với mạng ổn định hơn."));
     }, ms);
     task.on(
       "state_changed",
@@ -67,7 +77,7 @@ function uploadWithTimeout(path: string, blob: Blob, contentType: string, ms: nu
 
 function OnboardingContent() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, profile, role, isVerificationLoaded } = useAuth();
   const submitLock = React.useRef(false);
 
   const [step, setStep] = React.useState<1 | 2 | 3>(1);
@@ -144,6 +154,7 @@ function OnboardingContent() {
 
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
 
     try {
@@ -165,8 +176,18 @@ function OnboardingContent() {
       setSubmitError("Vui lòng đăng nhập trước khi gửi hồ sơ xác minh.");
       return;
     }
-    if (!cardImageBlob || !formData.studentId.trim() || !formData.zaloPhone.trim()) {
+    const cleanZaloPhone = normalizePhoneInput(formData.zaloPhone);
+    const cleanAltPhone = normalizePhoneInput(formData.altPhone);
+    if (!cardImageBlob || !formData.studentId.trim() || !cleanZaloPhone) {
       setSubmitError("Vui lòng điền đầy đủ các mục bắt buộc và tải ảnh thẻ.");
+      return;
+    }
+    if (!/^(0|\+84)[35789][0-9]{8}$/.test(cleanZaloPhone)) {
+      setSubmitError("Số Zalo không đúng định dạng Việt Nam (ví dụ: 0912345678).");
+      return;
+    }
+    if (cleanAltPhone && !/^(0|\+84)[35789][0-9]{8}$/.test(cleanAltPhone)) {
+      setSubmitError("Số điện thoại phụ không đúng định dạng Việt Nam.");
       return;
     }
     const mime =
@@ -179,23 +200,55 @@ function OnboardingContent() {
 
     submitLock.current = true;
     setIsSubmitting(true);
-    try {
-      const ext = mime === "image/jpeg" ? "jpg" : "webp";
-      const fileId = crypto.randomUUID().replace(/-/g, "").slice(0, 24); // khớp [A-Za-z0-9_-]{4,64}
-      const storagePath = `private/cards/${user.uid}/${fileId}.${ext}`;
+    let uploadedSessionId = "";
+    let uploadedCardPath = "";
 
-      let cardStoragePath = storagePath;
+    const cleanupCardUpload = async () => {
+      if (!uploadedSessionId || !uploadedCardPath) return;
+      await authFetch("/api/uploads/cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: uploadedSessionId, paths: [uploadedCardPath] }),
+      }).catch(() => undefined);
+      uploadedSessionId = "";
+      uploadedCardPath = "";
+    };
+
+    try {
+      const intentRes = await authFetch("/api/uploads/intent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "card",
+          files: [{ contentType: mime, sizeBytes: cardImageBlob.size }],
+        }),
+      });
+      const intentJson = await intentRes.json().catch(() => null);
+      if (!intentRes.ok || !intentJson?.sessionId || !intentJson?.files?.[0]?.path) {
+        throw new Error(extractApiError(intentJson, intentRes.status));
+      }
+
+      const sessionId = String(intentJson.sessionId);
+      const cardStoragePath = String(intentJson.files[0].path);
+      uploadedSessionId = sessionId;
+      uploadedCardPath = cardStoragePath;
+
       try {
-        await uploadWithTimeout(storagePath, cardImageBlob, mime, UPLOAD_TIMEOUT_MS);
-      } catch (storageErr) {
-        console.warn("Upload Storage thất bại/quá hạn, dùng cơ chế dự phòng:", storageErr);
-        const dataUrl = await blobToDataUrl(cardImageBlob);
-        if (dataUrl.length > MAX_DATA_URL_CHARS) {
-          throw new Error(
-            "Mạng đang yếu và ảnh thẻ quá nặng để gửi dự phòng. Hãy kết nối mạng ổn định hơn rồi thử lại."
-          );
+        await uploadWithTimeout(cardStoragePath, cardImageBlob, mime, sessionId, UPLOAD_TIMEOUT_MS);
+        const finalizeRes = await authFetch("/api/uploads/finalize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, paths: [cardStoragePath] }),
+        });
+        if (!finalizeRes.ok) {
+          const finErr = await finalizeRes.json().catch(() => null);
+          throw new Error(extractApiError(finErr, finalizeRes.status));
         }
-        cardStoragePath = dataUrl;
+      } catch (storageErr) {
+        await cleanupCardUpload();
+        throw storageErr instanceof Error
+          ? storageErr
+          : new Error("Không thể tải ảnh thẻ lên lưu trữ đám mây. Vui lòng thử lại.");
       }
 
       const controller = new AbortController();
@@ -205,7 +258,15 @@ function OnboardingContent() {
         res = await authFetch("/api/verifications/submit", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...formData, cardStoragePath }),
+          body: JSON.stringify({
+            ...formData,
+            realName: formData.realName.trim(),
+            displayName: formData.displayName.trim(),
+            studentId: formData.studentId.trim(),
+            zaloPhone: cleanZaloPhone,
+            altPhone: cleanAltPhone,
+            cardStoragePath,
+          }),
           signal: controller.signal,
         });
       } finally {
@@ -214,13 +275,17 @@ function OnboardingContent() {
 
       const json = await res.json().catch(() => null);
       if (!res.ok) {
+        await cleanupCardUpload();
         const code = (json as { code?: string; error?: { code?: string } } | null)?.code
           ?? (json as { error?: { code?: string } } | null)?.error?.code;
         if (code === "VERIFICATION_PENDING") { setSuccessMessage(true); return; } // đã có hồ sơ đang chờ
         throw new Error(extractApiError(json, res.status));
       }
+      uploadedSessionId = "";
+      uploadedCardPath = "";
       setSuccessMessage(true); // CHỈ khi server trả 2xx
     } catch (err) {
+      await cleanupCardUpload();
       const aborted = err instanceof DOMException && err.name === "AbortError";
       setSubmitError(
         aborted
@@ -235,7 +300,31 @@ function OnboardingContent() {
     }
   };
 
-  if (successMessage) {
+  if (isVerificationLoaded && (profile?.verified || role === "verified" || role === "admin")) {
+    return (
+      <div className="max-w-md mx-auto my-12 p-6 bg-surface border border-surface-border rounded-2xl shadow-card text-center space-y-4">
+        <div className="w-16 h-16 rounded-full bg-verified-bg text-verified-border mx-auto flex items-center justify-center">
+          <ShieldCheck className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-bold font-heading text-text-main">
+          Tài Khoản Đã Được Xác Minh!
+        </h2>
+        <p className="text-xs text-text-secondary leading-relaxed">
+          Bạn đã có huy hiệu Sinh Viên Xác Thực và có thể đăng tin pass đồ, nhắn tin hoặc giữ chỗ ngay lập tức.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2 pt-2">
+          <Button variant="primary" size="md" className="w-full" onClick={() => router.push("/listings/new")}>
+            Đăng Tin Pass Đồ
+          </Button>
+          <Button variant="secondary" size="md" className="w-full" onClick={() => router.push("/")}>
+            Về Trang Chủ
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (successMessage || (isVerificationLoaded && profile?.verificationStatus === "pending")) {
     return (
       <div className="max-w-md mx-auto my-12 p-6 bg-surface border border-surface-border rounded-2xl shadow-card text-center space-y-4">
         <div className="w-16 h-16 rounded-full bg-verified-bg text-verified-border mx-auto flex items-center justify-center">
@@ -468,20 +557,24 @@ function OnboardingContent() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
                 label="Số Zalo liên hệ chính (bắt buộc) *"
+                type="tel"
+                inputMode="tel"
                 value={formData.zaloPhone}
                 onChange={(e) =>
                   setFormData({ ...formData, zaloPhone: e.target.value })
                 }
-                placeholder="0912 345 678"
+                placeholder="0912345678"
                 helperText="Ẩn mặc định, chỉ hiện cho người giữ chỗ được duyệt"
               />
               <Input
                 label="Số điện thoại gọi (tùy chọn)"
+                type="tel"
+                inputMode="tel"
                 value={formData.altPhone}
                 onChange={(e) =>
                   setFormData({ ...formData, altPhone: e.target.value })
                 }
-                placeholder="0987 654 321"
+                placeholder="0987654321"
               />
             </div>
 
@@ -493,9 +586,15 @@ function OnboardingContent() {
                 </label>
                 <select
                   value={formData.provinceCode}
-                  onChange={(e) =>
-                    setFormData({ ...formData, provinceCode: e.target.value })
-                  }
+                  onChange={(e) => {
+                    const nextProv = e.target.value;
+                    const firstWard = wardsData.find((w) => w.provinceCode === nextProv);
+                    setFormData({
+                      ...formData,
+                      provinceCode: nextProv,
+                      wardCode: firstWard?.code || "",
+                    });
+                  }}
                   className="w-full h-11 px-3 bg-surface border border-surface-border rounded-lg text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
                 >
                   {provincesData.map((p) => (
@@ -508,23 +607,32 @@ function OnboardingContent() {
 
               <div className="space-y-1.5">
                 <label className="block text-sm font-medium text-text-main">
-                  Phường / Xã / Đặc khu *
+                  Phường / Xã / Đặc khu
                 </label>
-                <select
-                  value={formData.wardCode}
-                  onChange={(e) =>
-                    setFormData({ ...formData, wardCode: e.target.value })
-                  }
-                  className="w-full h-11 px-3 bg-surface border border-surface-border rounded-lg text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  {wardsData
-                    .filter((w) => w.provinceCode === formData.provinceCode)
-                    .map((w) => (
-                      <option key={w.code} value={w.code}>
-                        {w.name} ({w.oldDistrictName})
-                      </option>
-                    ))}
-                </select>
+                {(() => {
+                  const provinceWards = wardsData.filter(
+                    (w) => w.provinceCode === formData.provinceCode
+                  );
+                  return (
+                    <select
+                      value={formData.wardCode}
+                      onChange={(e) =>
+                        setFormData({ ...formData, wardCode: e.target.value })
+                      }
+                      className="w-full h-11 px-3 bg-surface border border-surface-border rounded-lg text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      {provinceWards.length === 0 ? (
+                        <option value="">Khu vực khác (ghi rõ ở ô bên dưới)</option>
+                      ) : (
+                        provinceWards.map((w) => (
+                          <option key={w.code} value={w.code}>
+                            {w.name} ({w.oldDistrictName})
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  );
+                })()}
               </div>
             </div>
 
@@ -603,7 +711,7 @@ function OnboardingContent() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/jpeg,image/png,image/webp"
+                accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
                 className="hidden"
                 onChange={handleImageSelect}
               />

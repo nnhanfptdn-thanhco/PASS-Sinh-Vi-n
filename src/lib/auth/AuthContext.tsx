@@ -6,6 +6,8 @@ import {
   onAuthStateChanged,
   signInWithPopup,
   signInWithRedirect,
+  reauthenticateWithPopup,
+  reauthenticateWithRedirect,
   getRedirectResult,
   signOut,
   IdTokenResult,
@@ -14,16 +16,10 @@ import { doc, onSnapshot, Unsubscribe } from "firebase/firestore";
 import { auth, db, googleProvider, authFetch } from "@/lib/firebase/client";
 import { isEmbeddedWebView } from "@/lib/utils/webview";
 import { getFirebaseAuthErrorMessage } from "@/lib/auth/errors";
+import { deriveRole, UserRole } from "@/lib/auth/role";
 
-export type UserRole = "guest" | "pending" | "verified" | "admin";
-
-// Quyền hạn suy ra duy nhất từ Firebase Auth Custom Claims (không để lộ email admin ra client bundle)
-export function deriveRole(claims: Record<string, unknown>) {
-  const isAdmin = claims.admin === true || claims.role === "admin";
-  const isVerified = claims.verified === true || claims.role === "verified" || isAdmin;
-  const role: UserRole = isAdmin ? "admin" : isVerified ? "verified" : "pending";
-  return { isAdmin, isVerified, role, adminClaimMissing: false };
-}
+export { deriveRole };
+export type { UserRole };
 
 export interface UserProfileData {
   uid: string;
@@ -48,9 +44,11 @@ interface AuthContextType {
   role: UserRole;
   adminClaimMissing: boolean;
   isLoading: boolean;
+  isVerificationLoaded: boolean;
   isSigningIn: boolean;
   isWebView: boolean;
   loginWithGoogle: () => Promise<void>;
+  reauthenticateWithGoogle: () => Promise<boolean>;
   logout: () => Promise<void>;
   refreshClaims: () => Promise<void>;
   getIdToken: () => Promise<string | undefined>;
@@ -64,9 +62,11 @@ const AuthContext = React.createContext<AuthContextType>({
   role: "guest",
   adminClaimMissing: false,
   isLoading: true,
+  isVerificationLoaded: false,
   isSigningIn: false,
   isWebView: false,
   loginWithGoogle: async () => {},
+  reauthenticateWithGoogle: async () => false,
   logout: async () => {},
   refreshClaims: async () => {},
   getIdToken: async () => undefined,
@@ -80,9 +80,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = React.useState<UserRole>("guest");
   const [adminClaimMissing, setAdminClaimMissing] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(true);
+  const [isVerificationLoaded, setIsVerificationLoaded] = React.useState(false);
   const [isSigningIn, setIsSigningIn] = React.useState(false);
   const [isWebView, setIsWebView] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+
+  // Giữ kết quả deriveRole mới nhất trong ref để các callback onSnapshot KHÔNG bao giờ ghi đè bằng closure cũ
+  const derivedRoleRef = React.useRef<ReturnType<typeof deriveRole>>(deriveRole({}));
 
   const refreshClaims = React.useCallback(async () => {
     const u = auth.currentUser;
@@ -90,15 +94,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const tokenResult = await u.getIdTokenResult(true);
       const d = deriveRole(tokenResult.claims as Record<string, unknown>);
+      derivedRoleRef.current = d;
       setRole(d.role);
       setAdminClaimMissing(d.adminClaimMissing);
       setProfile((prev) =>
         prev
           ? {
               ...prev,
-              verified: d.isVerified || prev.verificationStatus === "approved",
+              verified: d.isAdmin || d.isVerified || prev.verificationStatus === "approved",
               isAdmin: d.isAdmin,
-              verificationStatus: d.isVerified ? "approved" : prev.verificationStatus,
+              verificationStatus:
+                d.isAdmin || d.isVerified ? "approved" : prev.verificationStatus,
             }
           : null
       );
@@ -110,11 +116,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     setIsWebView(isEmbeddedWebView());
 
-    // Xử lý kết quả trả về từ signInWithRedirect nếu có
+    // Xử lý kết quả trả về từ signInWithRedirect / reauthenticateWithRedirect (đặc biệt trên Safari iPhone/iPad)
     getRedirectResult(auth)
       .then((result) => {
         if (result?.user) {
-          // Thành công từ redirect
+          // onAuthStateChanged sẽ tiếp quản cập nhật state
         }
       })
       .catch((err: unknown) => {
@@ -145,45 +151,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(currentUser);
 
       if (!currentUser) {
+        derivedRoleRef.current = deriveRole({});
         setProfile(null);
         setRole("guest");
         setAdminClaimMissing(false);
+        setIsVerificationLoaded(true);
         setIsLoading(false);
         return;
       }
 
+      setIsVerificationLoaded(false);
+
       try {
-        // 1. Lấy Claims từ ID Token hiện tại NGAY LẬP TỨC (từ memory cache, mất 0ms)
+        // 1. Lấy Claims từ ID Token hiện tại NGAY LẬP TỨC
         const tokenResult: IdTokenResult = await currentUser.getIdTokenResult();
         if (seq !== authSeq) return;
 
-        const d = deriveRole(tokenResult.claims as Record<string, unknown>);
-        setRole(d.role);
-        setAdminClaimMissing(d.adminClaimMissing);
+        const initialD = deriveRole(tokenResult.claims as Record<string, unknown>);
+        derivedRoleRef.current = initialD;
+        setRole(initialD.role);
+        setAdminClaimMissing(initialD.adminClaimMissing);
 
-        // Khởi tạo profile sơ bộ từ token ngay lập tức (không đọc localStorage giả mạo)
+        // Khởi tạo profile sơ bộ; để verificationStatus = undefined nếu chưa chắc chắn để tránh redirect sớm sang onboarding
         setProfile({
           uid: currentUser.uid,
           displayName: currentUser.displayName || "Sinh viên",
           email: currentUser.email,
           photoURL: currentUser.photoURL,
-          verified: d.isVerified,
-          isAdmin: d.isAdmin,
-          verificationStatus: d.isVerified ? "approved" : "none",
+          verified: initialD.isAdmin || initialD.isVerified,
+          isAdmin: initialD.isAdmin,
+          verificationStatus: initialD.isAdmin || initialD.isVerified ? "approved" : undefined,
         });
 
-        // Bỏ cờ isLoading NGAY LẬP TỨC để toàn bộ giao diện phản hồi 60 FPS, không bị đơ/lag
         setIsLoading(false);
 
-        // 2. Chạy Bootstrap API ngầm trong nền (Fire-and-forget, không chặn render giao diện)
+        // 2. Chạy Bootstrap API trong nền & cập nhật lại claims nếu máy chủ vừa cấp quyền (Admin/Verified)
         authFetch("/api/auth/bootstrap", {
           method: "POST",
         })
           .then(async (res) => {
+            if (seq !== authSeq) return;
             if (res.ok) {
               const data = await res.json().catch(() => ({}));
               if (data?.claimsChanged) {
                 await currentUser.getIdToken(true);
+                if (seq !== authSeq) return;
                 await refreshClaims();
               }
             }
@@ -192,13 +204,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // 3. Đăng ký Snapshot Firestore đọc users/{uid} và verifications/{uid} thời gian thực
         let userDocData: Record<string, unknown> = {};
-        let verificationStatus: "none" | "pending" | "approved" | "rejected" | "expired" =
-          d.isVerified ? "approved" : "none";
+        let verificationStatus: "none" | "pending" | "approved" | "rejected" | "expired" | undefined =
+          initialD.isAdmin || initialD.isVerified ? "approved" : undefined;
 
         const updateCombinedProfile = () => {
           if (seq !== authSeq) return;
+          const latestD = derivedRoleRef.current;
           const isAppApproved =
-            d.isAdmin || (verificationStatus === "none" ? d.isVerified : verificationStatus === "approved");
+            latestD.isAdmin ||
+            (verificationStatus === undefined || verificationStatus === "none"
+              ? latestD.isVerified
+              : verificationStatus === "approved");
+
+          const effectiveVerificationStatus =
+            verificationStatus !== undefined && verificationStatus !== "none"
+              ? verificationStatus
+              : latestD.isAdmin || latestD.isVerified
+              ? "approved"
+              : verificationStatus;
 
           setProfile((prev) => ({
             uid: currentUser.uid,
@@ -208,7 +231,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               currentUser.displayName ||
               "Sinh viên",
             email: currentUser.email,
-            photoURL: (userDocData.photoURL as string) || currentUser.photoURL,
+            photoURL:
+              userDocData.photoURL !== undefined
+                ? ((userDocData.photoURL as string | null) ?? null)
+                : prev?.photoURL ?? currentUser.photoURL,
             schoolCode: (userDocData.schoolCode as string) || prev?.schoolCode,
             schoolName: (userDocData.schoolName as string) || prev?.schoolName,
             campusId: (userDocData.campusId as string) || prev?.campusId,
@@ -216,14 +242,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             provinceCode: (userDocData.provinceCode as string) || prev?.provinceCode,
             wardCode: (userDocData.wardCode as string) || prev?.wardCode,
             verified: isAppApproved,
-            isAdmin: d.isAdmin,
+            isAdmin: latestD.isAdmin,
             isGraduating: (userDocData.isGraduating as boolean) ?? prev?.isGraduating,
-            verificationStatus:
-              verificationStatus !== "none"
-                ? verificationStatus
-                : d.isVerified
-                ? "approved"
-                : "none",
+            verificationStatus: effectiveVerificationStatus,
           }));
         };
 
@@ -248,16 +269,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           verificationDocRef,
           async (verifSnap) => {
             if (seq !== authSeq) return;
+            const latestD = derivedRoleRef.current;
             if (verifSnap.exists()) {
               const vData = verifSnap.data();
               verificationStatus = (vData.status as typeof verificationStatus) || "pending";
 
               // Nếu hồ sơ đã duyệt mà claim chưa có verified, tự động làm mới token
-              if (verificationStatus === "approved" && !d.isVerified) {
+              if (verificationStatus === "approved" && !latestD.isVerified) {
                 try {
                   const refreshedToken = await currentUser.getIdTokenResult(true);
                   if (seq !== authSeq) return;
                   const refreshedD = deriveRole(refreshedToken.claims as Record<string, unknown>);
+                  derivedRoleRef.current = refreshedD;
                   setRole(refreshedD.role);
                   setAdminClaimMissing(refreshedD.adminClaimMissing);
                 } catch {
@@ -265,20 +288,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 }
               }
             } else {
-              verificationStatus = d.isVerified ? "approved" : "none";
+              verificationStatus = latestD.isAdmin || latestD.isVerified ? "approved" : "none";
             }
+            setIsVerificationLoaded(true);
             updateCombinedProfile();
           },
           () => {
             if (seq !== authSeq) return;
-            verificationStatus = d.isVerified ? "approved" : "none";
+            const latestD = derivedRoleRef.current;
+            verificationStatus = latestD.isAdmin || latestD.isVerified ? "approved" : "none";
+            setIsVerificationLoaded(true);
             updateCombinedProfile();
           }
         );
       } catch {
         const fallbackD = deriveRole({});
+        derivedRoleRef.current = fallbackD;
         setRole(fallbackD.role);
         setAdminClaimMissing(fallbackD.adminClaimMissing);
+        setIsVerificationLoaded(true);
         setIsLoading(false);
       }
     });
@@ -302,10 +330,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginWithGoogle = async () => {
     setErrorMessage(null);
 
-    // Kiểm tra trình duyệt nhúng Zalo / Facebook / TikTok...
     if (isEmbeddedWebView()) {
       setErrorMessage(
-        "Bạn đang mở trong ứng dụng Zalo/Facebook/TikTok. Vui lòng bấm vào biểu tượng ba chấm (...) ở góc trên và chọn 'Mở bằng Chrome' hoặc 'Mở bằng Safari' để đăng nhập Google an toàn."
+        "Bạn đang mở trong ứng dụng Zalo/Facebook/TikTok. Vui lòng bấm vào biểu tượng ba chấm (...) và chọn 'Mở bằng Safari' (iPhone/iPad) hoặc 'Mở bằng Chrome' (Android) để đăng nhập Google an toàn."
       );
       return;
     }
@@ -314,13 +341,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsSigningIn(true);
 
     try {
-      // Mặc định đăng nhập bằng Popup đồng bộ
       await signInWithPopup(auth, googleProvider);
     } catch (popupErr: unknown) {
       const err = popupErr as { code?: string; message?: string };
       const code = err?.code;
 
-      if (code === "auth/popup-blocked") {
+      if (
+        code === "auth/popup-blocked" ||
+        code === "auth/operation-not-supported-in-this-environment" ||
+        code === "auth/internal-error"
+      ) {
         try {
           await signInWithRedirect(auth, googleProvider);
           return;
@@ -333,7 +363,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         code === "auth/popup-closed-by-user" ||
         code === "auth/cancelled-popup-request"
       ) {
-        // Người dùng tự đóng hoặc huỷ popup: Im lặng, không hiển thị thông báo đỏ
+        // Người dùng tự đóng hoặc huỷ popup
       } else {
         const msg = getFirebaseAuthErrorMessage(code);
         if (msg) {
@@ -345,12 +375,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const reauthenticateWithGoogle = async (): Promise<boolean> => {
+    const u = auth.currentUser;
+    if (!u) return false;
+    setErrorMessage(null);
+    try {
+      await reauthenticateWithPopup(u, googleProvider);
+      await u.getIdToken(true);
+      return true;
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      if (
+        code === "auth/popup-blocked" ||
+        code === "auth/operation-not-supported-in-this-environment" ||
+        code === "auth/internal-error"
+      ) {
+        try {
+          await reauthenticateWithRedirect(u, googleProvider);
+          return false;
+        } catch (rErr) {
+          const msg = getFirebaseAuthErrorMessage((rErr as { code?: string })?.code);
+          if (msg) setErrorMessage(msg);
+          return false;
+        }
+      }
+      if (code !== "auth/popup-closed-by-user" && code !== "auth/cancelled-popup-request") {
+        const msg = getFirebaseAuthErrorMessage(code);
+        if (msg) setErrorMessage(msg);
+      }
+      return false;
+    }
+  };
+
   const logout = async () => {
     try {
       await signOut(auth);
+      derivedRoleRef.current = deriveRole({});
       setRole("guest");
       setUser(null);
       setProfile(null);
+      setIsVerificationLoaded(true);
       if (typeof window !== "undefined") {
         window.location.href = "/";
       }
@@ -367,9 +431,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         role,
         adminClaimMissing,
         isLoading,
+        isVerificationLoaded,
         isSigningIn,
         isWebView,
         loginWithGoogle,
+        reauthenticateWithGoogle,
         logout,
         refreshClaims,
         getIdToken,

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/server/auth-guard";
+import { requireActiveUser } from "@/lib/server/auth-guard";
 import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
+import { FIRESTORE_ID_SCHEMA } from "@/lib/server/schemas";
 import { adminDb, FieldValue } from "@/lib/firebase/admin";
 import { containsContactInfo } from "@/lib/utils/contact-filter";
 import { z } from "zod";
@@ -11,14 +12,18 @@ export const dynamic = "force-dynamic";
 
 const reviewSchema = z
   .object({
-    reservationId: z.string().min(1, "Thiếu reservationId"),
-    rating: z.number().int("Đánh giá phải là số sao nguyên").min(1, "Đánh giá tối thiểu 1 sao").max(5, "Đánh giá tối đa 5 sao"),
+    reservationId: FIRESTORE_ID_SCHEMA,
+    rating: z
+      .number()
+      .int("Đánh giá phải là số sao nguyên")
+      .min(1, "Đánh giá tối thiểu 1 sao")
+      .max(5, "Đánh giá tối đa 5 sao"),
     comment: z.string().max(500, "Bình luận tối đa 500 ký tự").optional(),
   })
   .strict();
 
 export const POST = withApi(async (req: NextRequest) => {
-  const auth = await requireAuth(req);
+  const auth = await requireActiveUser(req);
   const reviewerId = auth.uid;
 
   const body = await readJson(req);
@@ -33,46 +38,6 @@ export const POST = withApi(async (req: NextRequest) => {
     );
   }
 
-  // 1. Kiểm tra giao dịch đã hoàn tất chưa
-  const resSnap = await adminDb.collection("reservations").doc(reservationId).get();
-  if (!resSnap.exists) {
-    throw new ApiError(404, "RESERVATION_NOT_FOUND", "Không tìm thấy giao dịch.");
-  }
-
-  const resData = resSnap.data();
-  if (resData?.status !== "completed") {
-    throw new ApiError(
-      403,
-      "FORBIDDEN_NOT_COMPLETED",
-      "Chỉ được gửi đánh giá sau khi giao dịch đã hoàn tất thành công."
-    );
-  }
-
-  // Cửa sổ đánh giá: Tối đa 30 ngày kể từ khi hoàn tất giao dịch (F14)
-  const completedAtMs =
-    (resData?.completedAt as { toMillis?: () => number } | undefined)?.toMillis?.() ||
-    (resData?.updatedAt as { toMillis?: () => number } | undefined)?.toMillis?.() ||
-    0;
-  if (completedAtMs && Date.now() - completedAtMs > 30 * 24 * 3600 * 1000) {
-    throw new ApiError(
-      400,
-      "REVIEW_WINDOW_EXPIRED",
-      "Đã quá thời hạn 30 ngày để gửi đánh giá cho giao dịch này."
-    );
-  }
-
-  const isBuyer = resData?.buyerId === reviewerId;
-  const isSeller = resData?.sellerId === reviewerId;
-
-  if (!isBuyer && !isSeller) {
-    throw new ApiError(403, "FORBIDDEN_NOT_PARTICIPANT", "Bạn không tham gia vào giao dịch này.");
-  }
-
-  const targetUserId = isBuyer ? resData?.sellerId : resData?.buyerId;
-  if (!targetUserId) {
-    throw new ApiError(400, "INVALID_TARGET_USER", "Không xác định được đối phương cần đánh giá.");
-  }
-
   await consumeRateLimit({
     scope: "review",
     key: reviewerId,
@@ -81,12 +46,50 @@ export const POST = withApi(async (req: NextRequest) => {
     customMessage: "Bạn gửi đánh giá quá nhanh. Vui lòng chờ một chút.",
   });
 
-  // 2. Định danh duy nhất `${reservationId}_${reviewerId}` & cập nhật rating nguyên tử qua Transaction (F14)
+  const resRef = adminDb.collection("reservations").doc(reservationId);
   const reviewRef = adminDb.collection("reviews").doc(`${reservationId}_${reviewerId}`);
-  const targetRef = adminDb.collection("users").doc(targetUserId);
   const reviewerRef = adminDb.collection("users").doc(reviewerId);
 
+  // Đọc trạng thái completed của reservation NGAY TRONG transaction cùng review và target/reviewer docs
   await adminDb.runTransaction(async (tx) => {
+    const resSnap = await tx.get(resRef);
+    if (!resSnap.exists) {
+      throw new ApiError(404, "RESERVATION_NOT_FOUND", "Không tìm thấy giao dịch.");
+    }
+
+    const resData = resSnap.data();
+    if (resData?.status !== "completed") {
+      throw new ApiError(
+        403,
+        "FORBIDDEN_NOT_COMPLETED",
+        "Chỉ được gửi đánh giá sau khi giao dịch đã hoàn tất thành công."
+      );
+    }
+
+    const completedAtMs =
+      (resData?.completedAt as { toMillis?: () => number } | undefined)?.toMillis?.() ||
+      (resData?.updatedAt as { toMillis?: () => number } | undefined)?.toMillis?.() ||
+      0;
+    if (completedAtMs && Date.now() - completedAtMs > 30 * 24 * 3600 * 1000) {
+      throw new ApiError(
+        400,
+        "REVIEW_WINDOW_EXPIRED",
+        "Đã quá thời hạn 30 ngày để gửi đánh giá cho giao dịch này."
+      );
+    }
+
+    const isBuyer = resData?.buyerId === reviewerId;
+    const isSeller = resData?.sellerId === reviewerId;
+    if (!isBuyer && !isSeller) {
+      throw new ApiError(403, "FORBIDDEN_NOT_PARTICIPANT", "Bạn không tham gia vào giao dịch này.");
+    }
+
+    const targetUserId = isBuyer ? (resData?.sellerId as string) : (resData?.buyerId as string);
+    if (!targetUserId) {
+      throw new ApiError(400, "INVALID_TARGET_USER", "Không xác định được đối phương cần đánh giá.");
+    }
+
+    const targetRef = adminDb.collection("users").doc(targetUserId);
     const [rSnap, tSnap, revSnap] = await Promise.all([
       tx.get(reviewRef),
       tx.get(targetRef),
@@ -118,16 +121,18 @@ export const POST = withApi(async (req: NextRequest) => {
       createdAt: FieldValue.serverTimestamp(),
     });
 
-    tx.set(
-      targetRef,
-      {
-        ratingSum: sum,
-        reviewsCount: count,
-        rating: Number((sum / count).toFixed(1)),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    if (tSnap.exists && !targetUserId.startsWith("deleted_")) {
+      tx.set(
+        targetRef,
+        {
+          ratingSum: sum,
+          reviewsCount: count,
+          rating: Number((sum / count).toFixed(1)),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
   });
 
   return NextResponse.json({

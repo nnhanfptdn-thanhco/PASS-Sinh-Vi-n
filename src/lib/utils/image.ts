@@ -30,89 +30,96 @@ export async function compressAndAnalyzeImage(
   quality = 0.85
 ): Promise<CompressedImageResult> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        let width = img.width;
-        let height = img.height;
-
-        // Tính tỉ lệ co về maxDimension
-        if (width > maxDimension || height > maxDimension) {
-          if (width > height) {
-            height = Math.round((height * maxDimension) / width);
-            width = maxDimension;
-          } else {
-            width = Math.round((width * maxDimension) / height);
-            height = maxDimension;
-          }
-        }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-
-        if (!ctx) {
-          reject(new Error("Không thể khởi tạo Canvas 2D"));
-          return;
-        }
-
-        // Vẽ ảnh lên canvas (quá trình này tự động làm sạch EXIF vị trí)
-        ctx.drawImage(img, 0, 0, width, height);
-
-        // Lấy dữ liệu pixel để phân tích độ sáng & độ sắc nét
-        const imgData = ctx.getImageData(0, 0, width, height);
-        const qualityCheck = analyzeImagePixels(imgData);
-
-        // Xuất ra WebP, fallback JPEG nếu Safari trả PNG
-        const exportWithFallback = (targetMime: "image/webp" | "image/jpeg", q: number) => {
-          canvas.toBlob(
-            (blob) => {
-              if (!blob) {
-                reject(new Error("Lỗi khi xuất Blob từ canvas"));
-                return;
-              }
-              // Safari trả image/png khi không hỗ trợ encode WebP -> chuyển sang JPEG
-              if (targetMime === "image/webp" && blob.type !== "image/webp") {
-                exportWithFallback("image/jpeg", q);
-                return;
-              }
-              const mime = blob.type === "image/jpeg" ? "image/jpeg" : "image/webp";
-              let currentQ = q;
-              let dataUrl = canvas.toDataURL(mime, currentQ);
-
-              // Giảm chất lượng nếu kích thước Data URL vượt ngưỡng 480KB (P1-11)
-              const MAX_DATA_URL_CHARS = 480 * 1024;
-              if (dataUrl.length > MAX_DATA_URL_CHARS && currentQ > 0.5) {
-                currentQ = 0.6;
-                dataUrl = canvas.toDataURL(mime, currentQ);
-                if (dataUrl.length > MAX_DATA_URL_CHARS) {
-                  currentQ = 0.5;
-                  dataUrl = canvas.toDataURL(mime, currentQ);
-                }
-              }
-
-              resolve({
-                blob,
-                dataUrl,
-                width,
-                height,
-                quality: qualityCheck,
-              });
-            },
-            targetMime,
-            q
-          );
-        };
-
-        exportWithFallback("image/webp", quality);
-      };
-      img.onerror = () => reject(new Error("Không thể đọc định dạng ảnh"));
-      img.src = e.target?.result as string;
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    const cleanupUrl = () => {
+      try {
+        URL.revokeObjectURL(objectUrl);
+      } catch {
+        // ignore
+      }
     };
-    reader.onerror = () => reject(new Error("Không thể đọc tệp"));
-    reader.readAsDataURL(file);
+    img.onload = () => {
+      cleanupUrl();
+      let width = img.naturalWidth || img.width;
+      let height = img.naturalHeight || img.height;
+
+      // Tính tỉ lệ co về maxDimension
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+
+      if (!ctx) {
+        reject(new Error("Không thể khởi tạo Canvas 2D"));
+        return;
+      }
+
+      // Vẽ ảnh lên canvas (quá trình này tự động làm sạch EXIF vị trí)
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // Lấy dữ liệu pixel để phân tích độ sáng & độ sắc nét
+      const imgData = ctx.getImageData(0, 0, width, height);
+      const qualityCheck = analyzeImagePixels(imgData);
+
+      // Xuất ra WebP, fallback JPEG nếu Safari trả PNG
+      const exportWithFallback = (targetMime: "image/webp" | "image/jpeg", q: number) => {
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              reject(new Error("Lỗi khi xuất Blob từ canvas"));
+              return;
+            }
+            // Safari trả image/png khi không hỗ trợ encode WebP -> chuyển sang JPEG
+            if (targetMime === "image/webp" && blob.type !== "image/webp") {
+              exportWithFallback("image/jpeg", q);
+              return;
+            }
+            const mime = blob.type === "image/jpeg" ? "image/jpeg" : "image/webp";
+            let currentQ = q;
+            let dataUrl = canvas.toDataURL(mime, currentQ);
+
+            // Giảm chất lượng nếu kích thước Data URL vượt ngưỡng 480KB (P1-11)
+            const MAX_DATA_URL_CHARS = 480 * 1024;
+            if (dataUrl.length > MAX_DATA_URL_CHARS && currentQ > 0.5) {
+              currentQ = 0.6;
+              dataUrl = canvas.toDataURL(mime, currentQ);
+              if (dataUrl.length > MAX_DATA_URL_CHARS) {
+                currentQ = 0.5;
+                dataUrl = canvas.toDataURL(mime, currentQ);
+              }
+            }
+
+            resolve({
+              blob,
+              dataUrl,
+              width,
+              height,
+              quality: qualityCheck,
+            });
+          },
+          targetMime,
+          q
+        );
+      };
+
+      exportWithFallback("image/webp", quality);
+    };
+    img.onerror = () => {
+      cleanupUrl();
+      reject(new Error("Không thể đọc định dạng ảnh"));
+    };
+    img.src = objectUrl;
   });
 }
 

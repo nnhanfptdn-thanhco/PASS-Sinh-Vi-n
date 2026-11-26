@@ -47,7 +47,14 @@ export function validateManageListingAction(
 
   switch (action) {
     case "hide": {
-      if (currentStatus === "hidden_by_seller") {
+      if (currentStatus === "hidden_by_admin") {
+        return {
+          valid: false,
+          statusCode: 409,
+          error: "Tin đăng đã bị Quản trị viên ẩn trước đó.",
+        };
+      }
+      if (currentStatus === "hidden_by_seller" && !isAdmin) {
         return {
           valid: false,
           statusCode: 409,

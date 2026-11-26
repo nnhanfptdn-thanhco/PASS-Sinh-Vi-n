@@ -11,14 +11,6 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isVerified() {
-      return isAuthenticated() && (
-        request.auth.token.get('verified', false) == true ||
-        request.auth.token.get('studentVerified', false) == true ||
-        request.auth.token.get('role', '') == 'verified'
-      );
-    }
-
     function isAdmin() {
       return isAuthenticated() && (
         request.auth.token.get('admin', false) == true ||
@@ -26,17 +18,52 @@ service cloud.firestore {
       );
     }
 
-    // 1. users: Đọc công khai thông tin profile không nhạy cảm; tạo và xóa chỉ máy chủ; update chỉ photoURL (displayName bắt buộc qua Server API /api/account/profile)
+    // Kiểm tra trạng thái tài khoản trên Firestore: không đang chờ xóa / không bị khóa / cấm
+    function isUserDocActive(d) {
+      return d.get('accountStatus', 'active') == 'active' &&
+        d.get('status', 'active') == 'active' &&
+        d.get('disabled', false) != true &&
+        d.get('deleted', false) != true &&
+        !(d.get('deletionState', '') in ['pending', 'deleting', 'deleted']);
+    }
+
+    function isActiveAccount() {
+      return isAuthenticated() &&
+        !exists(/databases/$(database)/documents/pendingDeletions/$(request.auth.uid)) &&
+        (
+          !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+          isUserDocActive(get(/databases/$(database)/documents/users/$(request.auth.uid)).data)
+        );
+    }
+
+    // Nguồn chân lý sinh viên đã duyệt dựa trực tiếp trên Firestore (không dùng legacy studentVerified claim)
+    function isVerified() {
+      return isActiveAccount() && (
+        isAdmin() ||
+        (
+          exists(/databases/$(database)/documents/verifications/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/verifications/$(request.auth.uid)).data.status == 'approved'
+        )
+      );
+    }
+
+    // 1. users: Đọc công khai profile; tạo/xóa qua Server API; update chỉ photoURL khi tài khoản active
     match /users/{userId} {
       allow read: if true;
       allow create: if false; // Tạo bởi server API bootstrap
       allow update: if (isOwner(userId)
+          && isActiveAccount()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoURL', 'updatedAt'])
-          && (!('photoURL' in request.resource.data) || request.resource.data.photoURL == null || (
+          && (
+            request.resource.data.get('photoURL', null) == null || (
               request.resource.data.photoURL is string &&
               request.resource.data.photoURL.size() <= 500 &&
-              request.resource.data.photoURL.matches('https://(lh3\\.googleusercontent\\.com|firebasestorage\\.googleapis\\.com)/.*')
-          )))
+              (
+                request.resource.data.photoURL.matches('https://lh3\\.googleusercontent\\.com/.*') ||
+                request.resource.data.photoURL.matches('https://firebasestorage\\.googleapis\\.com/v0/b/cho-pass-sv(-dev)?\\.(firebasestorage\\.app|appspot\\.com)/o/public%2Favatars%2F' + userId + '%2Favatar\\.(webp|jpg)(\\?.*)?')
+              )
+            )
+          ))
         || isAdmin();
       allow delete: if false; // Xóa qua server API account/delete
     }
@@ -44,13 +71,13 @@ service cloud.firestore {
     // 2. usersPrivate: Chỉ chủ sở hữu và Admin đọc; ghi chỉ qua server Admin SDK
     match /usersPrivate/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow write: if false; // Chỉ qua Server Admin SDK
+      allow write: if false;
     }
 
-    // 3. verifications: Người dùng và Admin đọc hồ sơ của mình; mọi ghi/duyệt qua server API
+    // 3. verifications: Chủ tài khoản và Admin đọc; mọi ghi/duyệt qua Server API
     match /verifications/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow write: if false; // Chỉ qua Server API verifications/submit và admin/verifications
+      allow write: if false;
     }
 
     // 4. regions & schools & categories (Danh mục hành chính & trường học)
@@ -69,71 +96,66 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 5. listings: Đọc công khai tin active hoặc reserved.
-    // LƯU Ý BẢO MẬT: BỎ 'sold' khỏi danh sách đọc công khai theo SPEC WP-2C (tin đã bán biến mất khỏi mọi nơi công khai, chỉ chủ tin và Admin đọc được).
+    // 5. listings: Công khai active/reserved; chủ tin và Admin đọc thêm các trạng thái khác; ghi Server-only
     match /listings/{listingId} {
-      allow read: if resource.data.status in ['active', 'reserved'] 
+      allow read: if resource.data.status in ['active', 'reserved']
                   || (isAuthenticated() && resource.data.sellerId == request.auth.uid)
                   || isAdmin();
-      allow write: if false; // Toàn bộ tạo, sửa, đổi trạng thái qua API listings/create và listings/manage
+      allow write: if false;
     }
 
-    // 6. listingsPrivate: Chỉ người bán và người mua đã chốt đọc được địa chỉ chính xác; ghi qua Server API
+    // 6. listingsPrivate: OPTION A — Cấm buyer đọc trực tiếp qua SDK; chỉ chủ tin hoặc Admin đọc; buyer qua /api/listings/contact
     match /listingsPrivate/{listingId} {
       allow read: if isAuthenticated() && (
         resource.data.sellerId == request.auth.uid ||
-        resource.data.confirmedBuyerId == request.auth.uid ||
         isAdmin()
       );
-      allow write: if false; // Chỉ qua Server API
+      allow write: if false;
     }
 
-    // 7. reservations (Giữ chỗ): Mọi ghi qua Server API reservations/create và reservations/action
+    // 7. reservations (Giữ chỗ): Mọi ghi qua Server API
     match /reservations/{reservationId} {
       allow read: if isAuthenticated() && (
         resource.data.buyerId == request.auth.uid ||
         resource.data.sellerId == request.auth.uid ||
         isAdmin()
       );
-      allow write: if false; // Chỉ qua Server API
+      allow write: if false;
     }
 
-    // 8. conversations & messages: Bảo vệ chống tự chèn vào hội thoại của người khác
+    // 8. conversations & messages: Đọc bởi thành viên đang active (hoặc Admin); MỌI GHI Server-only qua API
     match /conversations/{convId} {
-      allow read: if isAuthenticated() && (
+      allow read: if isActiveAccount() && (
         request.auth.uid in resource.data.participantIds ||
         isAdmin()
       );
-      // Client cấm tạo conversation trực tiếp, bắt buộc gọi qua API /api/conversations/create
-      allow create: if false;
-      allow update: if isAuthenticated() && (
-        request.auth.uid in resource.data.participantIds &&
-        request.resource.data.participantIds == resource.data.participantIds &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessage', 'updatedAt', 'readBy']) &&
-        (request.resource.data.lastMessage == null || (request.resource.data.lastMessage is string && request.resource.data.lastMessage.size() <= 200)) &&
-        (request.resource.data.readBy is list && request.resource.data.readBy.size() <= 2 && request.resource.data.readBy.hasOnly(resource.data.participantIds))
-      );
-      allow delete: if isAdmin();
+      allow create, update, delete: if false;
     }
 
     match /conversations/{convId}/messages/{msgId} {
-      allow read: if isAuthenticated() && (
-        request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds ||
-        isAdmin()
-      );
-      allow create: if isVerified() &&
-        request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds &&
-        request.resource.data.keys().hasOnly(['senderId', 'text', 'createdAt', 'imagePath']) &&
-        request.resource.data.senderId == request.auth.uid &&
-        request.resource.data.text is string &&
-        request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 1000 &&
-        request.resource.data.createdAt == request.time &&
-        (!('imagePath' in request.resource.data) ||
-          request.resource.data.imagePath.matches('private/chats/' + convId + '/[A-Za-z0-9_-]{8,64}\\.(webp|jpg)'));
-      allow update, delete: if false;
+      allow read: if isActiveAccount() &&
+        exists(/databases/$(database)/documents/conversations/$(convId)) &&
+        (
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds ||
+          isAdmin()
+        );
+      allow create, update, delete: if false;
     }
 
-    // 9. favorites & follows: Quản lý ghi duy nhất qua Server API (chống desync favoritesCount, spam follow)
+    // 8b. aiConversations (NnhanAI): Tách biệt hoàn toàn khỏi chat buyer/seller; chỉ owner đang active đọc; mọi ghi Server-only
+    match /aiConversations/{convId} {
+      allow read: if isActiveAccount() && resource.data.ownerUid == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /aiConversations/{convId}/messages/{msgId} {
+      allow read: if isActiveAccount() &&
+        exists(/databases/$(database)/documents/aiConversations/$(convId)) &&
+        get(/databases/$(database)/documents/aiConversations/$(convId)).data.ownerUid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // 9. favorites & follows: Ghi duy nhất qua Server API
     match /favorites/{favId} {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
       allow write: if false;
@@ -144,43 +166,63 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // 10. reviews: Ghi qua Server API reviews để kiểm tra deal completed
+    // 10. reviews: Ghi qua Server API
     match /reviews/{reviewId} {
       allow read: if true;
-      allow write: if false; // Chỉ qua Server API reviews
+      allow write: if false;
     }
 
     // 11. reports & appeals: Ghi qua Server API
     match /reports/{reportId} {
       allow read: if (isAuthenticated() && resource.data.reporterId == request.auth.uid) || isAdmin();
-      allow write: if false; // Chỉ qua Server API reports
+      allow write: if false;
     }
 
     match /appeals/{appealId} {
       allow read: if (isAuthenticated() && resource.data.userId == request.auth.uid) || isAdmin();
-      allow write: if false; // Chỉ qua Server API appeals
+      allow write: if false;
     }
 
-    // 12. notifications: Tạo chỉ từ máy chủ (chống lừa đảo, giả mạo); người dùng chỉ update trạng thái 'read'
+    // 12. notifications: Tạo Server-only; người dùng active chỉ update trạng thái read hoặc tự xóa
     match /notifications/{notifId} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if false; // Tuyệt đối không cho client tạo thông báo
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid &&
+      allow create: if false;
+      allow update: if isActiveAccount() && resource.data.userId == request.auth.uid &&
                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'updatedAt']);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isActiveAccount() && resource.data.userId == request.auth.uid;
     }
 
-    // 13. adminLogs: Chỉ Admin đọc, Server Admin SDK ghi
+    // 13. adminLogs & contactViewLogs: Chỉ Admin đọc, Server ghi
     match /adminLogs/{logId} {
       allow read: if isAdmin();
       allow write: if false;
     }
 
-    // 14. contactViewLogs: Chỉ Admin đọc, Server ghi
     match /contactViewLogs/{logId} {
       allow read: if isAdmin();
       allow write: if false;
     }
+
+    // 14. Internal server queues, locks, quotas & state (Cấm hoàn toàn truy cập client)
+    match /uploadSessions/{id} { allow read, write: if false; }
+    match /userUploadQuotas/{id} { allow read, write: if false; }
+    match /userAiQuotas/{id} { allow read, write: if false; }
+    match /claimsSyncJobs/{id} { allow read, write: if false; }
+    match /storageCleanupJobs/{id} { allow read, write: if false; }
+    match /listingOperationJobs/{id} { allow read, write: if false; }
+    match /deadLetterAlerts/{id} { allow read, write: if false; }
+    match /sellerListingStats/{id} { allow read, write: if false; }
+    match /sellerTitleLocks/{id} { allow read, write: if false; }
+    match /listingReservationStats/{id} { allow read, write: if false; }
+    match /userReservationStats/{id} { allow read, write: if false; }
+    match /activeReservationLocks/{id} { allow read, write: if false; }
+    match /appealPendingLocks/{id} { allow read, write: if false; }
+    match /pendingDeletions/{id} { allow read, write: if false; }
+    match /rateLimits/{id} { allow read, write: if false; }
+    match /idempotency/{id} { allow read, write: if false; }
+    match /systemState/{id} { allow read, write: if false; }
+    match /systemMeta/{id} { allow read, write: if false; }
+    match /studentIdHashes/{id} { allow read, write: if false; }
 
     // Default deny all others
     match /{document=**} {

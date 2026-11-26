@@ -2,11 +2,14 @@
 
 import * as React from "react";
 import { ListingCard } from "@/components/ui/ListingCard";
+import { SkeletonListingCard } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { Loader2 } from "lucide-react";
 import type { PublicListingDTO } from "@/lib/services/listings";
 import { formatDeadlineVN } from "@/lib/utils/date";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { authFetch } from "@/lib/firebase/client";
 
 export function HomeFeed({
   initialItems = [],
@@ -15,34 +18,72 @@ export function HomeFeed({
   initialItems?: PublicListingDTO[];
   initialCursor?: string;
 }) {
+  const { user, profile } = useAuth();
   const [items, setItems] = React.useState<PublicListingDTO[]>(initialItems);
   const [nextCursor, setNextCursor] = React.useState<string | undefined>(initialCursor);
+  const [isInitialLoading, setIsInitialLoading] = React.useState(initialItems.length === 0);
   const [isLoadingMore, setIsLoadingMore] = React.useState(false);
+  const [favoriteIds, setFavoriteIds] = React.useState<Set<string>>(new Set());
 
   React.useEffect(() => {
-    if (initialItems.length === 0) {
-      fetch("/api/listings/search?sort=newest&limit=12")
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (data && Array.isArray(data.items) && data.items.length > 0) {
-            setItems(data.items);
-            if (data.nextCursor) setNextCursor(data.nextCursor);
-          }
-        })
-        .catch(() => {});
+    if (initialItems.length > 0) {
+      setIsInitialLoading(false);
+      return;
     }
+    let cancelled = false;
+    setIsInitialLoading(true);
+    fetch("/api/listings/search?sort=newest&limit=12")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        if (data && Array.isArray(data.items)) {
+          setItems(data.items);
+          setNextCursor(data.nextCursor);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setIsInitialLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [initialItems.length]);
+
+  React.useEffect(() => {
+    if (!user) {
+      setFavoriteIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    authFetch("/api/favorites/toggle")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.listingIds)) {
+          setFavoriteIds(new Set(data.listingIds));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   const handleLoadMore = async () => {
     if (!nextCursor || isLoadingMore) return;
     setIsLoadingMore(true);
 
     try {
-      const res = await fetch(`/api/listings/search?sort=newest&limit=12&cursor=${nextCursor}`);
+      const res = await fetch(
+        `/api/listings/search?sort=newest&limit=12&cursor=${encodeURIComponent(nextCursor)}`
+      );
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.items)) {
-          setItems((prev) => [...prev, ...data.items]);
+          setItems((prev) => {
+            const seen = new Set(prev.map((i) => i.id));
+            return [...prev, ...data.items.filter((i: PublicListingDTO) => !seen.has(i.id))];
+          });
         }
         setNextCursor(data.nextCursor);
       }
@@ -52,6 +93,23 @@ export function HomeFeed({
       setIsLoadingMore(false);
     }
   };
+
+  const getProximity = (item: PublicListingDTO): "sameSchool" | "sameCity" | "nationwide" => {
+    if (profile?.schoolCode && item.schoolCode === profile.schoolCode) return "sameSchool";
+    if (profile?.provinceCode && item.provinceCode === profile.provinceCode) return "sameCity";
+    return "nationwide";
+  };
+
+  if (isInitialLoading) {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+        <SkeletonListingCard />
+        <SkeletonListingCard />
+        <SkeletonListingCard />
+        <SkeletonListingCard />
+      </div>
+    );
+  }
 
   if (items.length === 0) {
     return (
@@ -82,9 +140,10 @@ export function HomeFeed({
             }
             schoolName={item.schoolName || "Sinh viên"}
             passDeadline={formatDeadlineVN(item.passDeadline)}
-            proximity="sameSchool"
+            proximity={getProximity(item)}
             campusDelivery={item.shippingMethods?.campusDelivery}
             condition={item.condition}
+            isFavorite={favoriteIds.has(item.id)}
           />
         ))}
       </div>

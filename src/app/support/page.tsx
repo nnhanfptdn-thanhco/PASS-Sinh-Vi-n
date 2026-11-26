@@ -1,13 +1,15 @@
 "use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { authFetch } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { HelpCircle, Send, CheckCircle2, ShieldAlert } from "lucide-react";
+import { HelpCircle, Send, CheckCircle2, ShieldAlert, AlertTriangle } from "lucide-react";
 
-export default function SupportPage() {
+function SupportContent() {
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const [targetType, setTargetType] = React.useState<"listing" | "account">("listing");
   const [targetId, setTargetId] = React.useState("");
@@ -15,28 +17,61 @@ export default function SupportPage() {
   const [note, setNote] = React.useState("");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [submitted, setSubmitted] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const paramType = searchParams.get("type");
+    const paramTargetId = searchParams.get("targetId");
+    if (paramType === "account") {
+      setTargetType("account");
+    } else if (paramTargetId) {
+      setTargetType("listing");
+      setTargetId(paramTargetId.trim());
+    }
+  }, [searchParams]);
 
   const handleSubmitAppeal = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     if (!user) {
-      alert("Vui lòng đăng nhập trước khi gửi yêu cầu hỗ trợ.");
+      setSubmitError("Vui lòng đăng nhập trước khi gửi yêu cầu kháng nghị.");
       return;
     }
+    const resolvedTargetId = targetType === "account" ? user.uid : targetId.trim();
+    if (!resolvedTargetId) {
+      setSubmitError("Vui lòng nhập chính xác mã tin đăng bị ẩn.");
+      return;
+    }
+    if (appealReason.trim().length < 5) {
+      setSubmitError("Lý do giải trình phải có ít nhất 5 ký tự.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      await authFetch("/api/appeals", {
+      const res = await authFetch("/api/appeals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           targetType,
-          targetId: targetId || "current-user",
-          appealReason,
-          note,
+          targetId: resolvedTargetId,
+          appealReason: appealReason.trim(),
+          note: note.trim(),
         }),
       });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        const msg =
+          typeof json?.error === "string"
+            ? json.error
+            : json?.issues?.[0]?.message || `Không thể gửi đơn kháng nghị (HTTP ${res.status}).`;
+        setSubmitError(msg);
+        return;
+      }
       setSubmitted(true);
+      setNote("");
     } catch {
-      setSubmitted(true);
+      setSubmitError("Lỗi kết nối máy chủ. Đơn kháng nghị CHƯA được gửi, vui lòng thử lại.");
     } finally {
       setIsSubmitting(false);
     }
@@ -110,10 +145,11 @@ export default function SupportPage() {
 
               {targetType === "listing" && (
                 <Input
-                  label="Mã tin đăng hoặc tên món đồ bị ẩn *"
+                  label="Mã tin đăng bị ẩn *"
                   value={targetId}
                   onChange={(e) => setTargetId(e.target.value)}
-                  placeholder="Ví dụ: Quạt đứng Senko (mã: l1)"
+                  placeholder="Ví dụ: nhập mã ID tin đăng từ trang Quản lý tin"
+                  required
                 />
               )}
 
@@ -130,7 +166,7 @@ export default function SupportPage() {
                   <option value="Đã bổ sung chứng từ / hóa đơn chứng minh">Đã bổ sung hóa đơn chứng minh chính chủ</option>
                   <option value="Đã che biển số xe theo đúng quy định">Đã che biển số xe theo đúng quy định</option>
                   <option value="Bị báo cáo ác ý từ đối thủ cạnh tranh">Bị báo cáo ác ý không đúng sự thật</option>
-                  <option value="Khác">Lý do khác</option>
+                  <option value="Lý do kháng nghị khác">Lý do khác</option>
                 </select>
               </div>
 
@@ -147,6 +183,13 @@ export default function SupportPage() {
                   className="w-full p-3 bg-surface border border-surface-border rounded-lg text-text-main placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary text-xs"
                 />
               </div>
+
+              {submitError && (
+                <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{submitError}</span>
+                </div>
+              )}
 
               <Button
                 type="submit"
@@ -200,5 +243,19 @@ export default function SupportPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SupportPage() {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="max-w-4xl mx-auto px-4 py-12 text-center text-xs text-text-muted">
+          Đang tải Trung tâm hỗ trợ...
+        </div>
+      }
+    >
+      <SupportContent />
+    </React.Suspense>
   );
 }

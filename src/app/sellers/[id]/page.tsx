@@ -16,6 +16,7 @@ import {
   getSellerActiveListings,
   getSellerRecentReviews,
 } from "@/lib/services/listings";
+import { formatDeadlineVN } from "@/lib/utils/date";
 
 export const dynamic = "force-dynamic";
 
@@ -157,8 +158,8 @@ export default async function SellerProfilePage({
                   urgent={item.urgentPass}
                   hasShipping={hasShip}
                   schoolName={item.schoolName}
-                  passDeadline={item.passDeadline}
-                  proximity="sameCity"
+                  passDeadline={formatDeadlineVN(item.passDeadline)}
+                  proximity="nationwide"
                   condition={item.condition}
                 />
               );

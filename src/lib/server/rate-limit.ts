@@ -36,63 +36,67 @@ export async function consumeRateLimit({
   const now = Date.now();
   const windowMs = windowSec * 1000;
   const windowIndex = Math.floor(now / windowMs);
-  const docId = `${scope}_${key}_${windowIndex}`;
-
-  // Kiểm tra nếu adminDb chưa được khởi tạo hoặc bị mock trong môi trường test thiếu doc/runTransaction
-  if (
-    !adminDb ||
-    typeof adminDb.collection !== "function" ||
-    typeof adminDb.runTransaction !== "function"
-  ) {
-    return { count: 1, remaining: limit - 1, resetAt: now + windowMs };
-  }
-
-  let rateLimitRef: FirebaseFirestore.DocumentReference;
-  try {
-    const col = adminDb.collection("rateLimits");
-    if (typeof col?.doc !== "function") {
-      return { count: 1, remaining: limit - 1, resetAt: now + windowMs };
-    }
-    rateLimitRef = col.doc(docId);
-  } catch {
-    return { count: 1, remaining: limit - 1, resetAt: now + windowMs };
-  }
+  const safeKey = String(key || "unknown").replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 120);
+  const docId = `${scope}_${safeKey}_${windowIndex}`;
 
   const windowExpiresAt = new Date((windowIndex + 1) * windowMs);
   const retryAfter = Math.max(1, Math.ceil(((windowIndex + 1) * windowMs - now) / 1000));
 
-  return await adminDb.runTransaction(async (transaction) => {
-    const snap = await transaction.get(rateLimitRef);
-
-    let count = 0;
-    if (snap.exists) {
-      count = (snap.data()?.count as number) || 0;
+  try {
+    if (
+      !adminDb ||
+      typeof adminDb.collection !== "function" ||
+      typeof adminDb.runTransaction !== "function"
+    ) {
+      throw new Error("adminDb is not configured or missing runTransaction");
     }
 
-    if (count >= limit) {
-      const msg =
-        customMessage ||
-        `Bạn đã thao tác quá nhanh. Giới hạn tối đa ${limit} lần mỗi chu kỳ. Vui lòng thử lại sau ${retryAfter} giây.`;
-      throw new ApiError(429, "RATE_LIMIT_EXCEEDED", msg, { retryAfter });
-    }
+    const rateLimitRef = adminDb.collection("rateLimits").doc(docId);
 
-    const nextCount = count + 1;
-    transaction.set(
-      rateLimitRef,
-      {
-        scope,
-        key,
+    return await adminDb.runTransaction(async (transaction) => {
+      const snap = await transaction.get(rateLimitRef);
+
+      let count = 0;
+      if (snap.exists) {
+        count = (snap.data()?.count as number) || 0;
+      }
+
+      if (count >= limit) {
+        const msg =
+          customMessage ||
+          `Bạn đã thao tác quá nhanh. Giới hạn tối đa ${limit} lần mỗi chu kỳ. Vui lòng thử lại sau ${retryAfter} giây.`;
+        throw new ApiError(429, "RATE_LIMIT_EXCEEDED", msg, { retryAfter });
+      }
+
+      const nextCount = count + 1;
+      transaction.set(
+        rateLimitRef,
+        {
+          scope,
+          key,
+          count: nextCount,
+          expiresAt: windowExpiresAt,
+          windowExpiresAt,
+          updatedAt: new Date(),
+        },
+        { merge: true }
+      );
+
+      return {
         count: nextCount,
-        expiresAt: windowExpiresAt,
-        updatedAt: new Date(),
-      },
-      { merge: true }
+        remaining: Math.max(0, limit - nextCount),
+        resetAt: windowExpiresAt.getTime(),
+      };
+    });
+  } catch (err: unknown) {
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    console.error("[RATE_LIMIT_ERROR] Lỗi hệ thống rate limit (Fail-Closed):", err);
+    throw new ApiError(
+      503,
+      "RATE_LIMIT_UNAVAILABLE",
+      "Dịch vụ giới hạn tần suất tạm thời không khả dụng. Vui lòng thử lại sau."
     );
-
-    return {
-      count: nextCount,
-      remaining: Math.max(0, limit - nextCount),
-      resetAt: windowExpiresAt.getTime(),
-    };
-  });
+  }
 }

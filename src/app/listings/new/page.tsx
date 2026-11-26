@@ -29,8 +29,9 @@ import {
 } from "lucide-react";
 import { RequireVerified } from "@/components/auth/RequireVerified";
 import { storage, authFetch } from "@/lib/firebase/client";
-import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 import { compressListingImage } from "@/lib/image/compress";
+import { safeRandomId } from "@/lib/utils";
 import { todayVN, addDaysVN } from "@/lib/utils/date";
 import categoriesData from "../../../../data/categories.json";
 
@@ -40,13 +41,53 @@ interface UploadedImageItem {
   storageUrl?: string;
   thumbUrl?: string;
   storagePath?: string;
+  thumbStoragePath?: string;
   status: "uploading" | "done" | "error";
   progress: number;
   error?: string;
 }
 
-// Tạo ảnh thumbnail 480px phía client
-async function createThumbBlob(file: File, maxEdge = 320, quality = 0.7): Promise<Blob> {
+const LISTING_UPLOAD_TIMEOUT_MS = 15_000;
+
+function uploadListingBlobWithTimeout(
+  path: string,
+  blob: Blob,
+  contentType: string,
+  sessionId: string,
+  ms: number
+): Promise<ReturnType<typeof ref>> {
+  return new Promise((resolve, reject) => {
+    const fileRef = ref(storage, path);
+    const task = uploadBytesResumable(fileRef, blob, {
+      contentType,
+      customMetadata: { sessionId },
+    });
+    const timer = setTimeout(() => {
+      task.cancel();
+      reject(new Error("Quá thời gian tải ảnh lên hệ thống. Đã hủy phiên tải này."));
+    }, ms);
+    task.on(
+      "state_changed",
+      undefined,
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(task.snapshot.ref);
+      }
+    );
+  });
+}
+
+// Tạo ảnh thumbnail 320px phía client, tự động fallback sang image/jpeg trên Safari iOS/iPadOS
+// (Safari không hỗ trợ canvas.toBlob("image/webp") và sẽ trả về image/png nếu không fallback)
+async function createThumbBlob(
+  file: File,
+  maxEdge = 320,
+  quality = 0.72
+): Promise<{ blob: Blob; contentType: "image/webp" | "image/jpeg"; ext: "webp" | "jpg" }> {
   const url = URL.createObjectURL(file);
   try {
     const img = new Image();
@@ -67,14 +108,28 @@ async function createThumbBlob(file: File, maxEdge = 320, quality = 0.7): Promis
       }
     }
     const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
+    canvas.width = Math.max(1, w);
+    canvas.height = Math.max(1, h);
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas không hỗ trợ");
-    ctx.drawImage(img, 0, 0, w, h);
-    return await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Lỗi toBlob"))), "image/webp", quality);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    const webpBlob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((b) => resolve(b), "image/webp", quality);
     });
+    if (webpBlob && webpBlob.type === "image/webp") {
+      return { blob: webpBlob, contentType: "image/webp", ext: "webp" };
+    }
+
+    const jpegBlob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((b) => resolve(b), "image/jpeg", quality);
+    });
+    if (!jpegBlob) {
+      throw new Error("Không thể tạo ảnh thu nhỏ JPEG/WebP trên trình duyệt này");
+    }
+    return { blob: jpegBlob, contentType: "image/jpeg", ext: "jpg" };
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -88,17 +143,12 @@ export default function NewListingPage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [stepError, setStepError] = React.useState<string | null>(null);
 
-  // Sinh draftId cố định cho phiên đăng tin
-  const draftId = React.useMemo(() => {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
-    }
-    return `draft_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-  }, []);
+  // Sinh draftId cố định an toàn trên mọi trình duyệt (kể cả Safari iOS/iPadOS)
+  const draftId = React.useMemo(() => safeRandomId("draft"), []);
 
   // Form State
   const [imageItems, setImageItems] = React.useState<UploadedImageItem[]>([]);
-  const [coverIndex, setCoverIndex] = React.useState(0);
+  const [coverItemId, setCoverItemId] = React.useState<string | null>(null);
   const [title, setTitle] = React.useState("");
   const [categoryId, setCategoryId] = React.useState("dien-may");
   const [subcategory, setSubcategory] = React.useState("Quạt đứng / quạt bàn");
@@ -138,9 +188,24 @@ export default function NewListingPage() {
     }
   }, [urgentPass]);
 
-  // Kiểm tra lưu nháp (Auto-Save Draft gắn theo uid)
+  // Kiểm tra tham số ?cloneTitle=&clonePrice= (từ nút "Đăng lại tương tự") hoặc Auto-Save Draft gắn theo uid
   React.useEffect(() => {
-    if (!user?.uid || typeof window === "undefined") return;
+    if (typeof window === "undefined") return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const cloneTitle = urlParams.get("cloneTitle");
+    const clonePrice = urlParams.get("clonePrice");
+    if (cloneTitle || clonePrice) {
+      if (cloneTitle) setTitle(cloneTitle.slice(0, 80));
+      if (clonePrice) {
+        const parsedPrice = Number(clonePrice);
+        if (Number.isFinite(parsedPrice) && parsedPrice >= 0) {
+          setPrice(Math.trunc(parsedPrice));
+        }
+      }
+      return;
+    }
+
+    if (!user?.uid) return;
     const draftKey = `listing_draft_${user.uid}`;
     const draft = localStorage.getItem(draftKey);
     if (draft) {
@@ -191,9 +256,10 @@ export default function NewListingPage() {
 
     const availableSlots = 10 - imageItems.length;
     const filesToUpload = Array.from(files).slice(0, availableSlots);
+    e.target.value = "";
 
     for (const file of filesToUpload) {
-      const localId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+      const localId = safeRandomId("p");
       const previewUrl = URL.createObjectURL(file);
 
       const newItem: UploadedImageItem = {
@@ -206,52 +272,86 @@ export default function NewListingPage() {
       setImageItems((prev) => [...prev, newItem]);
 
       try {
-        setImageItems((prev) => prev.map((it) => (it.id === localId ? { ...it, progress: 30 } : it)));
+        setImageItems((prev) => prev.map((it) => (it.id === localId ? { ...it, progress: 25 } : it)));
         const compressed = await compressListingImage(file);
-        const thumbBlob = await createThumbBlob(file);
+        const thumb = await createThumbBlob(file);
 
         const ext = compressed.extension || (compressed.mimeType === "image/jpeg" ? "jpg" : "webp");
         const contentType = compressed.mimeType || (ext === "jpg" ? "image/jpeg" : "image/webp");
+        const mainFileName = `img_${localId}.${ext}`;
+        const thumbFileName = `img_${localId}_t.${thumb.ext}`;
 
-        const base = `public/listings/${user.uid}/${draftId}`;
-        const mainPath = `${base}/${localId}.${ext}`;
-        const thumbPath = `${base}/${localId}_t.webp`;
-
-        let mainUrl = "";
-        let thumbUrl = "";
-        let storagePath = mainPath;
-
-        try {
-          const uploadPromise = Promise.all([
-            uploadBytes(ref(storage, mainPath), compressed.blob, { contentType }),
-            uploadBytes(ref(storage, thumbPath), thumbBlob, { contentType: "image/webp" }),
-          ]);
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("STORAGE_TIMEOUT")), 6000)
-          );
-          const [mainSnap, thumbSnap] = await Promise.race([uploadPromise, timeoutPromise]);
-          const [mUrl, tUrl] = await Promise.all([
-            getDownloadURL(mainSnap.ref),
-            getDownloadURL(thumbSnap.ref),
-          ]);
-          mainUrl = mUrl;
-          thumbUrl = tUrl;
-        } catch {
-          console.warn("Upload Storage quá 6s hoặc chưa kích hoạt, chuyển sang Base64 WebP nhẹ:");
-          const reader = new FileReader();
-          mainUrl = await new Promise<string>((resolve, reject) => {
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(compressed.blob);
-          });
-          const thumbReader = new FileReader();
-          thumbUrl = await new Promise<string>((resolve, reject) => {
-            thumbReader.onloadend = () => resolve(thumbReader.result as string);
-            thumbReader.onerror = reject;
-            thumbReader.readAsDataURL(thumbBlob);
-          });
-          storagePath = `data/${localId}.webp`;
+        const intentRes = await authFetch("/api/uploads/intent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kind: "listing",
+            sessionId: draftId,
+            files: [
+              { name: mainFileName, contentType, sizeBytes: compressed.blob.size },
+              { name: thumbFileName, contentType: thumb.contentType, sizeBytes: thumb.blob.size },
+            ],
+          }),
+        });
+        const intentJson = await intentRes.json().catch(() => null);
+        if (!intentRes.ok || !intentJson?.files || intentJson.files.length < 2) {
+          throw new Error(intentJson?.error || "Không thể cấp quyền tải ảnh. Vui lòng kiểm tra hạn mức.");
         }
+
+        const issuedMainPath = String(intentJson.files[0].path);
+        const issuedThumbPath = String(intentJson.files[1].path);
+        const uploadedPaths: string[] = [];
+
+        setImageItems((prev) => prev.map((it) => (it.id === localId ? { ...it, progress: 50 } : it)));
+
+        let mainRef: ReturnType<typeof ref>;
+        let thumbRef: ReturnType<typeof ref>;
+        try {
+          mainRef = await uploadListingBlobWithTimeout(
+            issuedMainPath,
+            compressed.blob,
+            contentType,
+            draftId,
+            LISTING_UPLOAD_TIMEOUT_MS
+          );
+          uploadedPaths.push(issuedMainPath);
+
+          thumbRef = await uploadListingBlobWithTimeout(
+            issuedThumbPath,
+            thumb.blob,
+            thumb.contentType,
+            draftId,
+            LISTING_UPLOAD_TIMEOUT_MS
+          );
+          uploadedPaths.push(issuedThumbPath);
+
+          const finalizeRes = await authFetch("/api/uploads/finalize", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sessionId: draftId,
+              paths: [issuedMainPath, issuedThumbPath],
+            }),
+          });
+          if (!finalizeRes.ok) {
+            const finErr = await finalizeRes.json().catch(() => null);
+            throw new Error(finErr?.error || "Không thể xác nhận tệp ảnh trên hệ thống lưu trữ.");
+          }
+        } catch (uploadErr) {
+          if (uploadedPaths.length > 0) {
+            await authFetch("/api/uploads/cleanup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sessionId: draftId, paths: uploadedPaths }),
+            }).catch(() => undefined);
+          }
+          throw uploadErr;
+        }
+
+        const [mainUrl, thumbUrl] = await Promise.all([
+          getDownloadURL(mainRef),
+          getDownloadURL(thumbRef),
+        ]);
 
         setImageItems((prev) =>
           prev.map((it) =>
@@ -262,14 +362,16 @@ export default function NewListingPage() {
                   progress: 100,
                   storageUrl: mainUrl,
                   thumbUrl,
-                  storagePath,
+                  storagePath: issuedMainPath,
+                  thumbStoragePath: issuedThumbPath,
                 }
               : it
           )
         );
       } catch (err: unknown) {
         console.error("Lỗi tải ảnh:", err);
-        const msg = err instanceof Error ? err.message : "Không thể nén hoặc tải ảnh";
+        const msg = err instanceof Error ? err.message : "Không thể nén hoặc tải ảnh lên Storage";
+        setStepError(msg);
         setImageItems((prev) =>
           prev.map((item) =>
             item.id === localId ? { ...item, status: "error", error: msg } : item
@@ -281,20 +383,33 @@ export default function NewListingPage() {
 
   const removeImage = async (index: number) => {
     const item = imageItems[index];
-    if (item) {
-      if (item.storagePath && !item.storagePath.startsWith("data/")) {
-        deleteObject(ref(storage, item.storagePath)).catch(() => {});
-        const thumbPath = item.storagePath.replace(/\.(webp|jpg)$/, "_t.webp");
-        deleteObject(ref(storage, thumbPath)).catch(() => {});
-      }
-      URL.revokeObjectURL(item.previewUrl);
-    }
     setImageItems((prev) => prev.filter((_, i) => i !== index));
-    if (coverIndex === index) setCoverIndex(0);
-    else if (coverIndex > index) setCoverIndex((prev) => prev - 1);
+    if (item && coverItemId === item.id) {
+      setCoverItemId(null);
+    }
+
+    if (item) {
+      URL.revokeObjectURL(item.previewUrl);
+      const targetPaths = [item.storagePath, item.thumbStoragePath].filter(
+        (p): p is string => Boolean(p && !p.startsWith("data/"))
+      );
+      if (targetPaths.length > 0) {
+        try {
+          await Promise.all(targetPaths.map((p) => deleteObject(ref(storage, p))));
+        } catch {
+          await authFetch("/api/uploads/cleanup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId: draftId, paths: targetPaths }),
+          }).catch(() => undefined);
+        }
+      }
+    }
   };
 
   const doneImages = imageItems.filter((i) => i.status === "done" && i.storageUrl);
+  const effectiveCoverItem =
+    doneImages.find((i) => i.id === coverItemId) || doneImages[0] || null;
 
   const validateStep = (step: number): boolean => {
     setStepError(null);
@@ -371,13 +486,16 @@ export default function NewListingPage() {
     setStepError(null);
 
     try {
+      const coverDoneIndex = effectiveCoverItem
+        ? doneImages.findIndex((i) => i.id === effectiveCoverItem.id)
+        : 0;
       const orderedUrls = doneImages.map((i) => i.storageUrl!);
       const orderedThumbs = doneImages.map((i) => i.thumbUrl || i.storageUrl!);
 
-      if (coverIndex > 0 && coverIndex < orderedUrls.length) {
-        const [covUrl] = orderedUrls.splice(coverIndex, 1);
+      if (coverDoneIndex > 0 && coverDoneIndex < orderedUrls.length) {
+        const [covUrl] = orderedUrls.splice(coverDoneIndex, 1);
         orderedUrls.unshift(covUrl);
-        const [covTh] = orderedThumbs.splice(coverIndex, 1);
+        const [covTh] = orderedThumbs.splice(coverDoneIndex, 1);
         orderedThumbs.unshift(covTh);
       }
 
@@ -535,11 +653,13 @@ export default function NewListingPage() {
 
               {/* Grid hiển thị ảnh */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {imageItems.map((item, idx) => (
+                {imageItems.map((item, idx) => {
+                  const isCover = effectiveCoverItem?.id === item.id;
+                  return (
                   <div
                     key={item.id}
                     className={`relative aspect-[4/3] rounded-xl overflow-hidden border-2 group ${
-                      coverIndex === idx
+                      isCover
                         ? "border-primary shadow-subtle ring-2 ring-primary/20"
                         : "border-surface-border"
                     }`}
@@ -571,10 +691,10 @@ export default function NewListingPage() {
                     {item.status === "done" && (
                       <button
                         type="button"
-                        onClick={() => setCoverIndex(idx)}
-                        title={coverIndex === idx ? "Ảnh bìa hiện tại" : "Chọn làm ảnh bìa"}
+                        onClick={() => setCoverItemId(item.id)}
+                        title={isCover ? "Ảnh bìa hiện tại" : "Chọn làm ảnh bìa"}
                         className={`absolute top-1.5 left-1.5 p-1 rounded-md transition-colors ${
-                          coverIndex === idx
+                          isCover
                             ? "bg-primary text-white"
                             : "bg-black/50 text-white hover:bg-primary"
                         }`}
@@ -593,13 +713,14 @@ export default function NewListingPage() {
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
 
-                    {coverIndex === idx && item.status === "done" && (
+                    {isCover && item.status === "done" && (
                       <span className="absolute bottom-1 left-1.5 px-1.5 py-0.2 rounded bg-primary text-[10px] font-bold text-white">
                         Ảnh bìa
                       </span>
                     )}
                   </div>
-                ))}
+                  );
+                })}
 
                 {/* Ô thêm ảnh mới */}
                 {imageItems.length < 10 && (
@@ -937,7 +1058,7 @@ export default function NewListingPage() {
                   type="date"
                   disabled={urgentPass}
                   min={todayVN()}
-                  max={addDaysVN(todayVN(), 30)}
+                  max={addDaysVN(todayVN(), 60)}
                   value={passDeadline}
                   onChange={(e) => setPassDeadline(e.target.value)}
                   className="w-full h-11 px-3 bg-surface border border-surface-border rounded-lg text-sm text-text-main disabled:bg-surface-muted disabled:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary"
@@ -1149,10 +1270,11 @@ export default function NewListingPage() {
               <div className="max-w-sm mx-auto">
                 <ListingCard
                   id="preview-id"
+                  previewMode={true}
                   title={title || "Tên món đồ của bạn"}
                   price={price}
                   originalPrice={originalPrice}
-                  imageUrl={doneImages[coverIndex]?.storageUrl || doneImages[0]?.storageUrl}
+                  imageUrl={effectiveCoverItem?.storageUrl || doneImages[0]?.storageUrl}
                   urgent={urgentPass}
                   hasShipping={allowSellerShip || allowCarrier}
                   schoolName={profile?.schoolName || "Trường của bạn"}

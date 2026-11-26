@@ -5,6 +5,7 @@ import { HttpError } from "../src/lib/auth/server";
 import { NO_SHOW_MIN_WAIT_MINUTES } from "../src/lib/constants/listing";
 import { validateManageListingAction } from "../src/lib/domain/listing-status";
 import { hasAdminClaim } from "../src/lib/server/claims";
+import { deriveRole } from "../src/lib/auth/role";
 
 describe("Phase 5: Comprehensive Security & Moderation Test Suite", () => {
   beforeEach(() => {
@@ -38,44 +39,35 @@ describe("Phase 5: Comprehensive Security & Moderation Test Suite", () => {
   });
 
   describe("2. [P1-1 + P1-2 + P2-7] Role Derivation & Admin Claim Rules", () => {
-    const CLIENT_ADMIN_EMAILS = ["nnhanfptdn@gmail.com"];
-
-    function deriveRole(
-      claims: Record<string, unknown>,
-      email: string | null,
-      emailVerified: boolean
-    ) {
-      const claimAdmin = claims.admin === true || claims.role === "admin";
-      const emailAdmin =
-        emailVerified && !!email && CLIENT_ADMIN_EMAILS.includes(email.toLowerCase());
-      const isAdmin = claimAdmin || emailAdmin;
-      const isVerified = claims.verified === true || claims.role === "verified" || isAdmin;
-      const role = isAdmin ? "admin" : isVerified ? "verified" : "pending";
-      return { isAdmin, isVerified, role, adminClaimMissing: emailAdmin && !claimAdmin };
-    }
-
-    it("Email admin nnhanfptdn@gmail.com đã verify nhưng chưa có custom claim -> role admin, adminClaimMissing = true", () => {
-      const res = deriveRole({}, "nnhanfptdn@gmail.com", true);
-      expect(res.isAdmin).toBe(true);
-      expect(res.role).toBe("admin");
-      expect(res.adminClaimMissing).toBe(true);
-    });
-
-    it("Email admin nnhanfptdn@gmail.com nhưng emailVerified = false -> KHÔNG phải admin", () => {
-      const res = deriveRole({}, "nnhanfptdn@gmail.com", false);
+    it("User không có custom claim admin -> KHÔNG phải admin (không phụ thuộc email client bundle)", () => {
+      const res = deriveRole({});
       expect(res.isAdmin).toBe(false);
       expect(res.role).toBe("pending");
       expect(res.adminClaimMissing).toBe(false);
     });
 
-    it("User có custom claim admin -> role admin, adminClaimMissing = false", () => {
-      const res = deriveRole({ admin: true }, "other@gmail.com", true);
+    it("User có verified: true -> role verified, isAdmin = false", () => {
+      const res = deriveRole({ verified: true });
+      expect(res.isAdmin).toBe(false);
+      expect(res.isVerified).toBe(true);
+      expect(res.role).toBe("verified");
+    });
+
+    it("User có custom claim admin: true -> role admin, isAdmin = true", () => {
+      const res = deriveRole({ admin: true });
       expect(res.isAdmin).toBe(true);
+      expect(res.isVerified).toBe(true);
       expect(res.role).toBe("admin");
       expect(res.adminClaimMissing).toBe(false);
     });
 
-    it("User có claim role: 'admin' (chuẩn cũ) -> hasAdminClaim nhận diện đúng", () => {
+    it("User có custom claim role: 'admin' (chuẩn cũ) -> role admin, isAdmin = true", () => {
+      const res = deriveRole({ role: "admin" });
+      expect(res.isAdmin).toBe(true);
+      expect(res.role).toBe("admin");
+    });
+
+    it("hasAdminClaim nhận diện đúng các dạng custom claims", () => {
       expect(hasAdminClaim({ role: "admin" })).toBe(true);
       expect(hasAdminClaim({ admin: true })).toBe(true);
       expect(hasAdminClaim({ role: "verified" })).toBe(false);

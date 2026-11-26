@@ -83,8 +83,20 @@ export interface CompressedResult {
  * Nén 1 tệp ảnh với đầy đủ kiểm tra lỗi, bậc thang chất lượng và dọn RAM
  */
 export async function compressListingImage(file: File): Promise<CompressedResult> {
-  const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
-  if (!allowedTypes.includes(file.type)) {
+  const allowedTypes = [
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+  ];
+  const fileTypeLower = (file.type || "").toLowerCase();
+  const hasAllowedExtension = /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name || "");
+  if (
+    !allowedTypes.includes(fileTypeLower) &&
+    !(fileTypeLower === "" && hasAllowedExtension)
+  ) {
     throw new Error("Định dạng ảnh chưa được hỗ trợ. Vui lòng chọn ảnh định dạng JPG, PNG hoặc WebP.");
   }
 

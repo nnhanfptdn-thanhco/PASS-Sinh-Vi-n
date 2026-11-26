@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/server/auth-guard";
+import crypto from "crypto";
+import { requireActiveUser } from "@/lib/server/auth-guard";
 import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { submitVerificationSchema } from "@/lib/server/schemas";
 import { adminDb, adminStorage, computeStudentIdHash, FieldValue, hasAdminCredentials } from "@/lib/firebase/admin";
 import { isStudentEmail } from "@/lib/auth/student-email";
+import { validateDisplayName } from "@/lib/utils/contact-filter";
+import { redactErrorMessage } from "@/lib/server/request-utils";
 import universitiesData from "@/data/universities_vietnam.json";
 
 export const runtime = "nodejs";
@@ -12,8 +15,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 export const POST = withApi(async (req: NextRequest) => {
-  // 1. Xác thực tài khoản đăng nhập
-  const auth = await requireAuth(req);
+  // 1. Xác thực tài khoản đăng nhập đang active
+  const auth = await requireActiveUser(req);
   const userId = auth.uid;
   const userEmail = auth.email || "";
 
@@ -37,6 +40,12 @@ export const POST = withApi(async (req: NextRequest) => {
   // 3. Đọc dữ liệu gửi lên (hỗ trợ tối đa 1MB cho payload ảnh WebP Base64 dự phòng)
   const body = await readJson(req, 1024 * 1024);
   const data = submitVerificationSchema.parse(body);
+
+  // 3b. Kiểm tra tên hiển thị: cấm SĐT/Zalo/Link và cấm giả mạo Ban Quản Trị
+  const nameValidation = validateDisplayName(data.displayName);
+  if (!nameValidation.valid) {
+    throw new ApiError(400, "INVALID_DISPLAY_NAME", nameValidation.error!);
+  }
 
   // 4. Kiểm tra đường dẫn ảnh thẻ (Bắt buộc Cloud Storage private/cards/{userId}/...)
   const CARD_PATH_RE = new RegExp(`^private/cards/${userId}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`);
@@ -100,13 +109,24 @@ export const POST = withApi(async (req: NextRequest) => {
   const verifRef = adminDb.collection("verifications").doc(userId);
   const studentIdHash = computeStudentIdHash(data.schoolCode, data.studentId);
   const hashLockRef = adminDb.collection("studentIdHashes").doc(studentIdHash);
+  const cardFileName = data.cardStoragePath.split("/").pop() || "";
+  const uploadSessionId = cardFileName.replace(/\.(webp|jpg)$/, "");
+  const uploadSessionRef = /^[A-Za-z0-9_-]{8,64}$/.test(uploadSessionId)
+    ? adminDb.collection("uploadSessions").doc(uploadSessionId)
+    : null;
 
   // 9. Transaction: Kiểm tra trạng thái và trùng thẻ sinh viên, lưu hồ sơ pending
+  let previousCardPathToDelete: string | null = null;
   await adminDb.runTransaction(async (transaction) => {
     // Đọc trạng thái hiện tại TRONG transaction để chống nộp song song
-    const currentVerif = await transaction.get(verifRef);
+    const [currentVerif, hashDoc, sessionSnap] = await Promise.all([
+      transaction.get(verifRef),
+      transaction.get(hashLockRef),
+      uploadSessionRef ? transaction.get(uploadSessionRef) : Promise.resolve(null),
+    ]);
     if (currentVerif.exists) {
-      const status = currentVerif.data()?.status;
+      const curData = currentVerif.data() || {};
+      const status = curData.status;
       if (status === "approved") {
         throw new ApiError(
           400,
@@ -121,10 +141,18 @@ export const POST = withApi(async (req: NextRequest) => {
           "Hồ sơ của bạn đang được xét duyệt. Vui lòng chờ phản hồi từ Ban Quản Trị."
         );
       }
+      const prevPath =
+        typeof curData.cardStoragePath === "string"
+          ? curData.cardStoragePath
+          : typeof curData.cardImagePath === "string"
+          ? curData.cardImagePath
+          : null;
+      if (prevPath && !curData.cardDeleted && prevPath !== data.cardStoragePath && !prevPath.startsWith("data:")) {
+        previousCardPathToDelete = prevPath;
+      }
     }
 
     // Chỉ đọc hashDoc để kiểm tra xem MSSV đã được duyệt cho ai khác chưa (F09)
-    const hashDoc = await transaction.get(hashLockRef);
     if (hashDoc.exists) {
       const existingOwner = hashDoc.data()?.userId;
       if (existingOwner && existingOwner !== userId) {
@@ -192,7 +220,52 @@ export const POST = withApi(async (req: NextRequest) => {
       },
       { merge: true }
     );
+
+    if (
+      uploadSessionRef &&
+      sessionSnap?.exists &&
+      sessionSnap.data()?.ownerUid === userId &&
+      sessionSnap.data()?.kind === "card"
+    ) {
+      transaction.update(uploadSessionRef, {
+        claimed: true,
+        status: "claimed",
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
   });
+
+  // Dọn tệp ảnh thẻ cũ khi sinh viên nộp lại hồ sơ sau khi bị từ chối/hết hạn
+  if (previousCardPathToDelete) {
+    const oldPath: string = previousCardPathToDelete;
+    try {
+      await adminStorage.bucket().file(oldPath).delete({ ignoreNotFound: true });
+    } catch (cleanErr) {
+      const digest = crypto.createHash("sha256").update(oldPath).digest("hex").slice(0, 24);
+      const jobId = `oldcard_${userId}_${digest}`;
+      await adminDb
+        .collection("storageCleanupJobs")
+        .doc(jobId)
+        .set(
+          {
+            jobId,
+            kind: "object",
+            targetPath: oldPath,
+            ownerUid: userId,
+            reason: "verification_resubmit_cleanup",
+            status: "pending",
+            attempts: 0,
+            deadLetter: false,
+            lastError: redactErrorMessage(cleanErr),
+            nextAttemptAt: new Date(Date.now() + 2 * 60 * 1000),
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        )
+        .catch(() => undefined);
+    }
+  }
 
   return NextResponse.json(
     {

@@ -1,8 +1,14 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import {
   getAuth,
+  initializeAuth,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  browserPopupRedirectResolver,
   connectAuthEmulator,
   GoogleAuthProvider,
+  type Auth,
 } from "firebase/auth";
 import {
   getFirestore,
@@ -27,7 +33,27 @@ const firebaseConfig = {
 
 // Khởi tạo Firebase App (Singleton pattern)
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-export const auth = getAuth(app);
+
+// Khởi tạo Auth tương thích Safari iOS/iPadOS (kể cả Private Browsing nơi IndexedDB bị hạn chế)
+function initClientAuth(): Auth {
+  if (typeof window === "undefined") {
+    return getAuth(app);
+  }
+  try {
+    return initializeAuth(app, {
+      persistence: [
+        indexedDBLocalPersistence,
+        browserLocalPersistence,
+        browserSessionPersistence,
+      ],
+      popupRedirectResolver: browserPopupRedirectResolver,
+    });
+  } catch {
+    return getAuth(app);
+  }
+}
+
+export const auth = initClientAuth();
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 
@@ -63,7 +89,6 @@ if (
  * authFetch: Helper gửi request API có tự động đính kèm Firebase ID Token.
  * - Tự động lấy token mới nhất của user đang đăng nhập.
  * - Nếu gặp lỗi 401 (token hết hạn/thu hồi), ép làm mới token 1 lần và thử lại.
- * - Nếu vẫn 401, tự động đăng xuất và điều hướng về trang đăng nhập kèm tham số ?next=.
  */
 export async function authFetch(
   input: RequestInfo | URL,

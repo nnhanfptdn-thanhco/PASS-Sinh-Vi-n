@@ -19,10 +19,10 @@ export function verifyCronRequest(request: NextRequest): void {
   }
 
   const token = m[1].trim();
-  const a = Buffer.from(secret);
-  const b = Buffer.from(token);
+  const a = crypto.createHash("sha256").update(secret).digest();
+  const b = crypto.createHash("sha256").update(token).digest();
 
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+  if (!crypto.timingSafeEqual(a, b)) {
     throw new ApiError(401, "UNAUTHORIZED_CRON", "Khóa bí mật cron không hợp lệ");
   }
 }

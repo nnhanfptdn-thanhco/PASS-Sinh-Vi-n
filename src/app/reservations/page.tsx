@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { authFetch, db } from "@/lib/firebase/client";
-import { collection, query, where, onSnapshot, getDocs } from "firebase/firestore";
+import { collection, query, where, onSnapshot, getDocs, limit } from "firebase/firestore";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/Button";
@@ -80,9 +80,11 @@ export default function ReservationsPage() {
       }
     >
   >({});
+  const attemptedContactIdsRef = React.useRef<Set<string>>(new Set());
 
   // Lắng nghe danh sách giữ chỗ thực tế từ Firestore
   React.useEffect(() => {
+    attemptedContactIdsRef.current.clear();
     if (!user?.uid) {
       setReservations([]);
       setIsLoading(false);
@@ -119,7 +121,8 @@ export default function ReservationsPage() {
     // 1. Lắng nghe với tư cách người mua
     const buyerQuery = query(
       collection(db, "reservations"),
-      where("buyerId", "==", user.uid)
+      where("buyerId", "==", user.uid),
+      limit(50)
     );
 
     const unsubBuyer = onSnapshot(
@@ -141,7 +144,8 @@ export default function ReservationsPage() {
     // 2. Lắng nghe với tư cách người bán
     const sellerQuery = query(
       collection(db, "reservations"),
-      where("sellerId", "==", user.uid)
+      where("sellerId", "==", user.uid),
+      limit(50)
     );
 
     const unsubSeller = onSnapshot(
@@ -164,7 +168,7 @@ export default function ReservationsPage() {
     const loadReviews = async () => {
       try {
         const revSnap = await getDocs(
-          query(collection(db, "reviews"), where("reviewerId", "==", user.uid))
+          query(collection(db, "reviews"), where("reviewerId", "==", user.uid), limit(100))
         );
         const set = new Set<string>();
         revSnap.forEach((doc) => {
@@ -209,11 +213,17 @@ export default function ReservationsPage() {
     }
   };
 
-  // Tự động tải địa chỉ cho các tin confirmed
+  // Tự động tải địa chỉ chỉ cho NGƯỜI MUA có giao dịch confirmed (tránh gọi 400 với tin seller)
   React.useEffect(() => {
     reservations.forEach((item) => {
-      if (item.status === "confirmed" && !revealedContacts[item.listingId]) {
-        fetchRevealedContact(item.listingId);
+      if (
+        item.status === "confirmed" &&
+        item.role === "buyer" &&
+        !revealedContacts[item.listingId] &&
+        !attemptedContactIdsRef.current.has(item.listingId)
+      ) {
+        attemptedContactIdsRef.current.add(item.listingId);
+        void fetchRevealedContact(item.listingId);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -535,8 +545,8 @@ export default function ReservationsPage() {
                     </div>
                   </div>
 
-                  {/* THÔNG TIN BẢO MẬT ĐÃ MỞ KHÓA CHO GIAO DỊCH CONFIRMED */}
-                  {item.status === "confirmed" && contactInfo && (
+                  {/* THÔNG TIN BẢO MẬT ĐÃ MỞ KHÓA CHO NGƯỜI MUA Ở GIAO DỊCH CONFIRMED */}
+                  {item.role === "buyer" && item.status === "confirmed" && contactInfo && (
                     <div className="p-4 bg-primary-light/40 border border-primary/20 rounded-xl space-y-2 text-xs">
                       <div className="flex items-center gap-2 font-bold text-primary">
                         <ShieldCheck className="w-4 h-4" />

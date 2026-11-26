@@ -47,7 +47,7 @@ function initAdminApp(): App {
   const storageBucket =
     process.env.FIREBASE_STORAGE_BUCKET ||
     process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-    `${projectId}.appspot.com`;
+    `${projectId}.firebasestorage.app`;
 
   // Nếu có service account: khởi tạo với cert. Ở production nếu lỗi cert -> throw lỗi (F18)
   if (hasValidServiceAccount && !isEmulator) {
@@ -87,15 +87,41 @@ try {
 
 export const app = appInstance;
 
+export const hasExplicitServiceAccount = Boolean(
+  process.env.FIREBASE_CLIENT_EMAIL?.trim() &&
+    process.env.FIREBASE_PRIVATE_KEY?.trim() &&
+    process.env.FIREBASE_PRIVATE_KEY.includes("PRIVATE KEY")
+);
+
+export const hasAdcSignal = Boolean(
+  process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() ||
+    process.env.K_SERVICE?.trim() ||
+    process.env.FUNCTION_TARGET?.trim() ||
+    process.env.GOOGLE_CLOUD_PROJECT?.trim() ||
+    process.env.CLOUD_RUN_JOB?.trim()
+);
+
+/**
+ * Lưu ý bảo mật: Không bao giờ dựa vào biến này để tắt checkRevoked trong verifyIdToken.
+ * Mọi xác thực người dùng ở server luôn gọi verifyIdToken(token, true).
+ */
 export const hasAdminCredentials = Boolean(
-  isEmulator ||
-    (process.env.FIREBASE_CLIENT_EMAIL?.trim() &&
-      process.env.FIREBASE_PRIVATE_KEY?.trim() &&
-      process.env.FIREBASE_PRIVATE_KEY.includes("PRIVATE KEY"))
+  isEmulator || hasExplicitServiceAccount || hasAdcSignal
 );
 
 export const adminAuth = getAuth(app);
 export const adminDb = getFirestore(app);
+// Đảm bảo Firestore Admin SDK bỏ qua thuộc tính undefined khi ghi DTO/idempotency (tránh crash 500 trên production)
+const globalAdminFlags = globalThis as unknown as { __choPassFirestoreSettingsApplied?: boolean };
+if (!globalAdminFlags.__choPassFirestoreSettingsApplied && typeof adminDb.settings === "function") {
+  try {
+    adminDb.settings({ ignoreUndefinedProperties: true });
+    globalAdminFlags.__choPassFirestoreSettingsApplied = true;
+  } catch {
+    // Firestore instance đã được khởi tạo settings trước đó (ví dụ trong HMR/test)
+    globalAdminFlags.__choPassFirestoreSettingsApplied = true;
+  }
+}
 export const adminStorage = getStorage(app);
 export { FieldValue, Timestamp } from "firebase-admin/firestore";
 

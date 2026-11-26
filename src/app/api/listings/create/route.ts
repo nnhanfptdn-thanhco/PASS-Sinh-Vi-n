@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import { requireApprovedStudent } from "@/lib/auth/server";
+import { requireApprovedStudent } from "@/lib/server/auth-guard";
 import { readJson, withApi, ApiError } from "@/lib/server/http";
 import { consumeRateLimit } from "@/lib/server/rate-limit";
 import { createListingSchema } from "@/lib/server/schemas";
@@ -8,6 +8,7 @@ import { adminDb, FieldValue } from "@/lib/firebase/admin";
 import { normalizeVi, buildSearchTokens } from "@/lib/search/normalize";
 import { containsContactInfo } from "@/lib/utils/contact-filter";
 import { toPublicListingDTO } from "@/lib/services/listings";
+import { sellerListingStatsRef, sellerTitleLockRef } from "@/lib/server/stats";
 import { MAX_ACTIVE_LISTINGS_PER_SELLER } from "@/lib/constants/listing";
 import universitiesData from "@/data/universities_vietnam.json";
 
@@ -15,15 +16,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const POST = withApi(async (req: NextRequest) => {
-  // 1. Xác thực sinh viên đã duyệt thẻ (Nguồn sự thật: Firestore)
+  // 1. Xác thực sinh viên đã duyệt thẻ (Canonical guard + live Firestore)
   const { token, verification, userDoc } = await requireApprovedStudent(req);
   const sellerId = token.uid;
 
-  // 2. Đọc và xác thực dữ liệu gửi lên (hỗ trợ tối đa 2MB cho tin đăng có ảnh WebP dự phòng)
+  // 2. Đọc và xác thực dữ liệu gửi lên
   const body = await readJson(req, 2 * 1024 * 1024);
   const data = createListingSchema.parse(body);
 
-  // 3. Xử lý Idempotency (Loại bỏ key chứa '/')
+  // 3. Xử lý Idempotency
   const rawKey =
     req.headers.get("idempotency-key") ||
     data.clientRequestId ||
@@ -43,7 +44,7 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
-  // 4. Rate limiting: SAU validation và idempotency để không đốt quota vô ích
+  // 4. Rate limiting: SAU validation và idempotency
   await consumeRateLimit({
     scope: "create_listing",
     key: sellerId,
@@ -56,12 +57,16 @@ export const POST = withApi(async (req: NextRequest) => {
   // 5. Chặn số điện thoại, Zalo, link mạng xã hội trong các trường văn bản công khai
   const publicTextFields = [
     data.title,
+    data.subcategory,
+    data.condition,
     data.description,
     data.defects,
     data.brandModel,
     data.usageTime,
     data.publicMeetingPoint,
     data.shippingMethods.shipFeeNote,
+    data.itemDimensions?.dimensions,
+    data.itemDimensions?.weight !== undefined ? String(data.itemDimensions.weight) : undefined,
   ];
 
   for (const text of publicTextFields) {
@@ -74,8 +79,7 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
-  // Chặn tách số điện thoại xuyên trường (ví dụ: nửa số ở tiêu đề, nửa số ở mô tả)
-  const combinedPublicText = publicTextFields.filter(Boolean).join(" ");
+  const combinedPublicText = publicTextFields.filter(Boolean).join(" | ");
   if (containsContactInfo(combinedPublicText)) {
     throw new ApiError(
       400,
@@ -84,17 +88,23 @@ export const POST = withApi(async (req: NextRequest) => {
     );
   }
 
-  // 6. Kiểm tra tính hợp lệ của ảnh (chỉ nhận URL/đường dẫn Storage của chính người bán, loại bỏ hoàn toàn data:image/)
-  const BUCKET =
-    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-    process.env.FIREBASE_STORAGE_BUCKET ||
-    "";
+  // 6. Kiểm tra tính hợp lệ của ảnh (chỉ nhận URL/đường dẫn Storage của chính người bán, chặn hoàn toàn data:image/)
+  const projectId =
+    process.env.FIREBASE_PROJECT_ID ||
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
+    "cho-pass-sv";
+  const ALLOWED_BUCKETS = new Set(
+    [
+      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+      process.env.FIREBASE_STORAGE_BUCKET,
+      `${projectId}.firebasestorage.app`,
+      `${projectId}.appspot.com`,
+    ].filter((b): b is string => Boolean(b && b.trim()))
+  );
   function isOwnListingImage(url: string, uid: string): boolean {
     if (!url || typeof url !== "string") return false;
-    // Chặn hoàn toàn data:image/ để chống DoS và lưu trữ rác base64
     if (url.startsWith("data:image/")) return false;
 
-    // Chấp nhận đường dẫn storage trực tiếp dạng public/listings/{uid}/...
     if (url.startsWith(`public/listings/${uid}/`)) {
       return new RegExp(
         `^public/listings/${uid}/[A-Za-z0-9_-]{4,64}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`
@@ -103,14 +113,11 @@ export const POST = withApi(async (req: NextRequest) => {
 
     try {
       const u = new URL(url);
-      if (
-        u.protocol !== "https:" ||
-        u.hostname !== "firebasestorage.googleapis.com"
-      ) {
+      if (u.protocol !== "https:" || u.hostname !== "firebasestorage.googleapis.com") {
         return false;
       }
       const m = /^\/v0\/b\/([^/]+)\/o\/(.+)$/.exec(u.pathname);
-      if (!m || (BUCKET && m[1] !== BUCKET)) return false;
+      if (!m || (ALLOWED_BUCKETS.size > 0 && !ALLOWED_BUCKETS.has(m[1]))) return false;
       const objectPath = decodeURIComponent(m[2]);
       return new RegExp(
         `^public/listings/${uid}/[A-Za-z0-9_-]{4,64}/[A-Za-z0-9_-]{4,64}\\.(webp|jpg)$`
@@ -130,7 +137,6 @@ export const POST = withApi(async (req: NextRequest) => {
     }
   }
 
-  // Loại bỏ ảnh trùng lặp
   const uniqueImages = Array.from(new Set(data.images));
   if (uniqueImages.length < 1) {
     throw new ApiError(
@@ -143,7 +149,7 @@ export const POST = withApi(async (req: NextRequest) => {
   // 7. Trường học và địa phương ép buộc từ hồ sơ đã duyệt ở server
   const verifiedSchoolCode =
     (verification.schoolCode as string) ||
-    (userDoc.schoolCode as string) ||
+    (userDoc?.schoolCode as string) ||
     data.schoolCode ||
     "";
 
@@ -172,24 +178,40 @@ export const POST = withApi(async (req: NextRequest) => {
     : `l_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
   const listingRef = adminDb.collection("listings").doc(listingId);
   const listingPrivateRef = adminDb.collection("listingsPrivate").doc(listingId);
+  const statsRef = sellerListingStatsRef(sellerId);
 
   const titleNormalized = normalizeVi(data.title);
   const searchTokens = buildSearchTokens(data.title, [
     data.brandModel,
     data.subcategory,
   ]);
+  const titleLockRef = sellerTitleLockRef(sellerId, titleNormalized);
+  const uploadSessionRef = data.draftId
+    ? adminDb.collection("uploadSessions").doc(data.draftId)
+    : null;
 
-  // 9. Thực thi Transaction nguyên tử
+  // 9. Thực thi Transaction nguyên tử + aggregate counter lock
   const result = await adminDb.runTransaction(async (transaction) => {
     // ===== READ PHASE =====
-    if (idemRef) {
-      const txIdemSnap = await transaction.get(idemRef);
-      if (txIdemSnap.exists) {
-        return txIdemSnap.data()?.responseBody;
-      }
+    const [txIdemSnap, existingSnap, statsSnap, titleLockSnap, activeListingsSnap, sessionSnap] =
+      await Promise.all([
+        idemRef ? transaction.get(idemRef) : Promise.resolve(null),
+        transaction.get(listingRef),
+        transaction.get(statsRef),
+        transaction.get(titleLockRef),
+        transaction.get(
+          adminDb
+            .collection("listings")
+            .where("sellerId", "==", sellerId)
+            .where("status", "in", ["active", "reserved"])
+        ),
+        uploadSessionRef ? transaction.get(uploadSessionRef) : Promise.resolve(null),
+      ]);
+
+    if (txIdemSnap && txIdemSnap.exists) {
+      return txIdemSnap.data()?.responseBody;
     }
 
-    const existingSnap = await transaction.get(listingRef);
     if (existingSnap.exists) {
       throw new ApiError(
         409,
@@ -198,21 +220,25 @@ export const POST = withApi(async (req: NextRequest) => {
       );
     }
 
-    const activeQuery = adminDb
-      .collection("listings")
-      .where("sellerId", "==", sellerId)
-      .where("status", "in", ["active", "reserved"]);
+    const storedActiveCount = statsSnap.exists ? Math.max(0, Number(statsSnap.data()?.activeCount ?? 0)) : 0;
+    const currentActiveCount = Math.max(storedActiveCount, activeListingsSnap.size);
 
-    const activeListingsSnap = await transaction.get(activeQuery);
-    if (activeListingsSnap.size >= MAX_ACTIVE_LISTINGS_PER_SELLER) {
+    if (currentActiveCount >= MAX_ACTIVE_LISTINGS_PER_SELLER) {
       throw new ApiError(
         429,
         "MAX_SLOTS_REACHED",
-        `Bạn đang có ${activeListingsSnap.size} tin đang hoạt động. Mỗi tài khoản chỉ được mở tối đa ${MAX_ACTIVE_LISTINGS_PER_SELLER} tin cùng lúc.`
+        `Bạn đang có ${currentActiveCount} tin đang hoạt động. Mỗi tài khoản chỉ được mở tối đa ${MAX_ACTIVE_LISTINGS_PER_SELLER} tin cùng lúc.`
       );
     }
 
-    // ===== WRITE PHASE =====
+    if (titleLockSnap.exists) {
+      throw new ApiError(
+        409,
+        "DUPLICATE_TITLE",
+        "Bạn đã có một tin đăng tương tự đang hoạt động. Vui lòng không đăng tin trùng lặp."
+      );
+    }
+
     for (const doc of activeListingsSnap.docs) {
       const activeData = doc.data();
       const existingTitleNorm = normalizeVi(activeData.title as string);
@@ -232,6 +258,7 @@ export const POST = withApi(async (req: NextRequest) => {
       }
     }
 
+    // ===== WRITE PHASE =====
     const coverImage = uniqueImages[0];
     const thumbs =
       data.thumbs && data.thumbs.length > 0 ? data.thumbs : undefined;
@@ -284,13 +311,39 @@ export const POST = withApi(async (req: NextRequest) => {
       exactAddress: data.exactAddress || "",
       detailedSchedule: data.detailedSchedule || "",
       confirmedBuyerId: null,
+      confirmedReservationId: null,
+      confirmedUntil: null,
       createdAt: FieldValue.serverTimestamp(),
     };
 
     transaction.set(listingRef, publicListingData);
     transaction.set(listingPrivateRef, privateListingData);
+    transaction.set(
+      statsRef,
+      {
+        activeCount: currentActiveCount + 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    transaction.create(titleLockRef, {
+      listingId,
+      sellerId,
+      titleNormalized,
+      createdAt: FieldValue.serverTimestamp(),
+    });
 
-    const dto = toPublicListingDTO(publicListingData, listingId);
+    if (uploadSessionRef && sessionSnap?.exists && sessionSnap.data()?.ownerUid === sellerId) {
+      transaction.update(uploadSessionRef, {
+        claimed: true,
+        listingId,
+        status: "claimed",
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+
+    const rawDto = toPublicListingDTO(publicListingData, listingId);
+    const dto = JSON.parse(JSON.stringify(rawDto));
     const responsePayload = {
       success: true,
       listingId,
@@ -298,7 +351,7 @@ export const POST = withApi(async (req: NextRequest) => {
     };
 
     if (idemRef) {
-      transaction.set(idemRef, {
+      transaction.create(idemRef, {
         responseBody: responsePayload,
         createdAt: FieldValue.serverTimestamp(),
         expiresAt: new Date(Date.now() + 24 * 3600 * 1000),

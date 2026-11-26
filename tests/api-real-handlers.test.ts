@@ -8,12 +8,28 @@ const FUTURE = addDaysVN(todayVN(), 10);
 vi.mock("server-only", () => ({}));
 
 // Mock requireApprovedStudent
-vi.mock("@/lib/auth/server", () => ({
-  requireApprovedStudent: vi.fn().mockResolvedValue({
-    token: { uid: "user-123", email: "student@fpt.edu.vn", role: "student" },
-    verification: { schoolCode: "FPT-DN", status: "approved" },
-    userDoc: { displayName: "Sinh Viên Test" },
+const mockedVerifiedStudent = {
+  uid: "user-123",
+  token: { uid: "user-123", email: "student@fpt.edu.vn", role: "student" },
+  verification: { schoolCode: "FPT-DN", status: "approved" },
+  userDoc: { displayName: "Sinh Viên Test", accountStatus: "active" },
+  accountStatus: "active",
+  role: "student",
+};
+
+vi.mock("@/lib/server/auth-guard", () => ({
+  requireApprovedStudent: vi.fn().mockResolvedValue(mockedVerifiedStudent),
+  requireVerified: vi.fn().mockResolvedValue(mockedVerifiedStudent),
+  requireActiveUser: vi.fn().mockResolvedValue(mockedVerifiedStudent),
+  requireAuth: vi.fn().mockResolvedValue(mockedVerifiedStudent),
+  requireAdmin: vi.fn().mockResolvedValue({
+    ...mockedVerifiedStudent,
+    role: "admin",
   }),
+}));
+
+vi.mock("@/lib/auth/server", () => ({
+  requireApprovedStudent: vi.fn().mockResolvedValue(mockedVerifiedStudent),
   requireAuth: vi.fn().mockResolvedValue({
     uid: "user-123",
     email: "student@fpt.edu.vn",

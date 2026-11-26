@@ -143,14 +143,14 @@ export default function HomePage() {
             🚚 Có ship
           </Badge>
         </Link>
-        <Link href="/search">
+        <Link href="/search?sameSchool=true">
           <Badge variant="sameSchool" className="cursor-pointer py-1.5 px-3">
             🎓 Cùng trường của tôi
           </Badge>
         </Link>
-        <Link href="/search">
+        <Link href="/search?sort=newest">
           <Badge variant="pickup" className="cursor-pointer py-1.5 px-3">
-            📍 Tự đến lấy
+            🆕 Mới đăng nhất
           </Badge>
         </Link>
       </div>

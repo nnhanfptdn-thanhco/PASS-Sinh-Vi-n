@@ -1,9 +1,13 @@
+"use client";
+
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatCurrencyVND } from "@/lib/utils";
 import { Badge } from "@/components/ui/Badge";
 import { Clock, Heart } from "lucide-react";
 import { authFetch } from "@/lib/firebase/client";
+import { useAuth } from "@/lib/auth/AuthContext";
 
 export interface ListingCardProps {
   id: string;
@@ -14,12 +18,13 @@ export interface ListingCardProps {
   urgent?: boolean;
   hasShipping?: boolean;
   schoolName: string;
-  passDeadline: string; // "Hôm nay", "2 ngày nữa", "20/11/2026"
+  passDeadline: string;
   proximity?: "sameSchool" | "sameWard" | "sameCity" | "nationwide";
   campusDelivery?: boolean;
-  condition?: string; // "Như mới", "Tốt", "Dùng được"
+  condition?: string;
   isFavorite?: boolean;
   onToggleFavorite?: (id: string) => void;
+  previewMode?: boolean;
 }
 
 export function ListingCard({
@@ -32,12 +37,15 @@ export function ListingCard({
   hasShipping = false,
   schoolName,
   passDeadline,
-  proximity = "sameSchool",
+  proximity = "nationwide",
   campusDelivery = false,
   condition,
   isFavorite = false,
   onToggleFavorite,
+  previewMode = false,
 }: ListingCardProps) {
+  const router = useRouter();
+  const { user } = useAuth();
   const [favorite, setFavorite] = React.useState(isFavorite);
 
   React.useEffect(() => {
@@ -47,8 +55,13 @@ export function ListingCard({
   const handleFavoriteClick = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (previewMode) return;
     if (onToggleFavorite) {
       onToggleFavorite(id);
+      return;
+    }
+    if (!user) {
+      router.push(`/auth/login?next=${encodeURIComponent(`/listings/${id}`)}`);
       return;
     }
     const nextVal = !favorite;
@@ -79,25 +92,23 @@ export function ListingCard({
       ? Math.round(((originalPrice - price) / originalPrice) * 100)
       : null;
 
-  return (
-    <div className="group relative flex flex-col bg-surface border border-surface-border rounded-xl overflow-hidden hover:shadow-card hover:border-primary/40 transition-all duration-200">
-      {/* Khung ảnh tỉ lệ 4:3 theo SPEC */}
-      <Link href={`/listings/${id}`} className="relative aspect-[4/3] w-full bg-surface-muted overflow-hidden block">
-        {imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={imageUrl}
-            alt={title}
-            loading="lazy"
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-text-muted text-xs bg-gradient-to-br from-surface-muted to-surface-border/50">
-            Chưa có ảnh
-          </div>
-        )}
+  const imageBoxContent = (
+    <>
+      {imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={imageUrl}
+          alt={title}
+          loading="lazy"
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-text-muted text-xs bg-gradient-to-br from-surface-muted to-surface-border/50">
+          Chưa có ảnh
+        </div>
+      )}
 
-        {/* Nút lưu yêu thích */}
+      {!previewMode && (
         <button
           type="button"
           aria-label={favorite ? "Bỏ lưu tin" : "Lưu tin"}
@@ -110,28 +121,38 @@ export function ListingCard({
             }`}
           />
         </button>
+      )}
 
-        {/* Huy hiệu nổi bật trên ảnh */}
-        <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
-          {urgent && <Badge variant="urgent">Pass trong ngày</Badge>}
-          {campusDelivery && (
-            <Badge variant="sameSchool">Giao trong trường</Badge>
-          )}
-        </div>
-
-        {/* Tình trạng món đồ */}
-        {condition && (
-          <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[11px] font-medium text-white">
-            {condition}
-          </div>
+      <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
+        {urgent && <Badge variant="urgent">Pass trong ngày</Badge>}
+        {campusDelivery && (
+          <Badge variant="sameSchool">Giao trong trường</Badge>
         )}
-      </Link>
+      </div>
 
-      {/* Phần thông tin chi tiết - chiều cao cố định để không vỡ lưới */}
+      {condition && (
+        <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[11px] font-medium text-white">
+          {condition}
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <div className="group relative flex flex-col bg-surface border border-surface-border rounded-xl overflow-hidden hover:shadow-card hover:border-primary/40 transition-all duration-200">
+      {previewMode ? (
+        <div className="relative aspect-[4/3] w-full bg-surface-muted overflow-hidden block">
+          {imageBoxContent}
+        </div>
+      ) : (
+        <Link href={`/listings/${id}`} className="relative aspect-[4/3] w-full bg-surface-muted overflow-hidden block">
+          {imageBoxContent}
+        </Link>
+      )}
+
       <div className="p-3.5 flex flex-col flex-1 justify-between gap-2.5">
         <div>
-          {/* Giá tiền to & rõ */}
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-lg font-bold text-primary">
               {formatCurrencyVND(price)}
             </span>
@@ -147,18 +168,25 @@ export function ListingCard({
             )}
           </div>
 
-          {/* Tiêu đề món đồ (cắt tối đa 2 dòng chuẩn) */}
-          <Link href={`/listings/${id}`} className="block">
+          {previewMode ? (
             <h3
               title={title}
-              className="text-sm font-semibold text-text-main line-clamp-2 leading-snug hover:text-primary transition-colors mt-0.5"
+              className="text-sm font-semibold text-text-main line-clamp-2 leading-snug mt-0.5"
             >
               {title}
             </h3>
-          </Link>
+          ) : (
+            <Link href={`/listings/${id}`} className="block">
+              <h3
+                title={title}
+                className="text-sm font-semibold text-text-main line-clamp-2 leading-snug hover:text-primary transition-colors mt-0.5"
+              >
+                {title}
+              </h3>
+            </Link>
+          )}
         </div>
 
-        {/* Thông tin trường & vận chuyển & hạn pass */}
         <div className="pt-2 border-t border-surface-border/60 flex flex-col gap-1.5 text-xs text-text-secondary">
           <div className="flex items-center justify-between gap-1">
             <span className="truncate max-w-[170px] font-medium text-text-main" title={schoolName}>

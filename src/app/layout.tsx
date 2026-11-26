@@ -30,15 +30,25 @@ export const metadata: Metadata = {
   },
   description:
     "Nền tảng mua bán và pass đồ cũ dành riêng cho sinh viên Việt Nam: quạt, nồi cơm, bàn học, giáo trình, xe cộ. Người đăng tin là sinh viên đã xác thực.",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Chợ Pass SV",
+  },
+  formatDetection: {
+    telephone: false,
+  },
   openGraph: {
     siteName: "Chợ Pass Sinh Viên",
     locale: "vi_VN",
     type: "website",
     title: "Chợ Pass Sinh Viên - Chợ đồ cũ sinh viên toàn quốc",
     description: "Nền tảng mua bán và pass đồ cũ dành riêng cho sinh viên Việt Nam.",
+    images: [{ url: "/og-default.png", width: 1200, height: 630, alt: "Chợ Pass Sinh Viên" }],
   },
   twitter: {
     card: "summary_large_image",
+    images: ["/og-default.png"],
   },
 };
 
@@ -46,6 +56,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
+  viewportFit: "cover",
   themeColor: "#059669",
 };
 
@@ -57,12 +68,12 @@ export default function RootLayout({
   return (
     <html lang="vi" suppressHydrationWarning>
       <body
-        className={`${beVietnamPro.variable} ${plusJakartaSans.variable} min-h-screen bg-background text-text-main flex flex-col font-body antialiased`}
+        className={`${beVietnamPro.variable} ${plusJakartaSans.variable} min-h-[100dvh] bg-background text-text-main flex flex-col font-body antialiased`}
       >
         <AuthProvider>
           <LegacyStorageCleanup />
           <Header />
-          <main className="flex-1 pb-20 md:pb-8">{children}</main>
+          <main className="flex-1 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] md:pb-8">{children}</main>
           <MobileBottomNav />
         </AuthProvider>
       </body>

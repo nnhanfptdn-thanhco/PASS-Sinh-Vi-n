@@ -18,8 +18,8 @@ export function normalizeVi(str: string | null | undefined): string {
 
 /**
  * Sinh search tokens cho Firestore từ title, brandModel, subcategory.
- * Bao gồm các từ đơn và prefix 2-10 ký tự của mỗi từ để tìm kiếm gõ dở.
- * Giới hạn tối đa 60 tokens để vừa kích thước index.
+ * Ưu tiên toàn bộ từ đầy đủ (title + brandModel + subcategory) trước,
+ * sau đó mới sinh cụm 2 từ và prefix 2-10 ký tự để tránh cắt mất brandModel/subcategory khi giới hạn 60 tokens.
  */
 export function buildSearchTokens(
   title: string,
@@ -31,18 +31,24 @@ export function buildSearchTokens(
 
   const tokenSet = new Set<string>();
 
+  // 1. Ưu tiên mọi từ đầy đủ (kể cả từ trong brandModel & subcategory)
   for (const word of words) {
     tokenSet.add(word);
-    // Sinh prefix từ 2 đến 10 ký tự
-    const maxLen = Math.min(10, word.length);
-    for (let len = 2; len < maxLen; len++) {
-      tokenSet.add(word.substring(0, len));
-    }
   }
 
-  // Thêm cụm từ 2 từ liền nhau nếu có
+  // 2. Thêm cụm từ 2 từ liền nhau
   for (let i = 0; i < words.length - 1; i++) {
     tokenSet.add(`${words[i]} ${words[i + 1]}`);
+  }
+
+  // 3. Sinh prefix từ 2 đến 10 ký tự cho đến trần 60 tokens
+  for (const word of words) {
+    if (tokenSet.size >= 60) break;
+    const maxLen = Math.min(10, word.length);
+    for (let len = 2; len < maxLen; len++) {
+      if (tokenSet.size >= 60) break;
+      tokenSet.add(word.substring(0, len));
+    }
   }
 
   return Array.from(tokenSet).slice(0, 60);
